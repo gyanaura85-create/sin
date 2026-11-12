@@ -1,0 +1,6 @@
+{
+  "name": "NearKart",
+  "description": "Your neighbourhood, your marketplace. Shop local products, track deliveries in real time, pay via UPI/COD, and empower local sellers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
