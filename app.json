@@ -4,6 +4,7 @@
     "name": "NearKart",
     "slug": "nearkart",
     "version": "1.0.0",
+    "icon": "./1794927737592.png",
     "plugins": [
       [
         "expo-notifications",
