@@ -1,0 +1,18 @@
+
+{
+  "expo": {
+    "name": "NearKart",
+    "slug": "nearkart",
+    "version": "1.0.0",
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./nearkart_notification.wav"
+          ]
+        }
+      ]
+    ]
+  }
+}
