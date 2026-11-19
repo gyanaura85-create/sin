@@ -1557,6 +1557,59 @@ function GradientBox({ children, style, from, to }) {
   );
 }
 
+
+function PrivacyPolicyPage({ onBack, color }) {
+  const section = (heading, body) => (
+    <View style={{ marginBottom: 18 }}>
+      <Text style={{ color: INK, fontSize: 15, fontWeight: '800', marginBottom: 6 }}>{heading}</Text>
+      <Text style={{ color: MUTE, fontSize: 13, lineHeight: 21 }}>{body}</Text>
+    </View>
+  );
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: BG }} contentContainerStyle={{ paddingBottom: 28 }}>
+      <View style={[s.head, { backgroundColor: color || BLUE, paddingBottom: 26 }]}>
+        <TouchableOpacity onPress={onBack} activeOpacity={0.8}>
+          <Text style={{ color: '#e6eeff', fontSize: 16 }}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={s.headT}>Privacy Policy</Text>
+        <Text style={{ color: '#e6eeff', marginTop: 4 }}>NearKart · Last updated: 19 November 2026</Text>
+      </View>
+      <View style={[s.card, { marginTop: 14, padding: 18 }]}>
+        <Text style={{ color: INK, fontSize: 14, lineHeight: 22, marginBottom: 16 }}>
+          NearKart helps customers discover nearby shops, place orders and receive updates. This policy explains what information the app handles and how it is used.
+        </Text>
+        {section('1. Information we collect',
+          'Account information: email address and password used to create or access your account. Profile and order information: name, phone number, delivery address, orders, order items, order status, reviews and support messages you choose to send. Seller information: shop name, owner/contact details, shop location and area, products, prices, stock, business hours, delivery fees, offers, UPI ID and QR code you choose to provide.')}
+        {section('2. Location and device permissions',
+          'If you allow location access, NearKart can use your device location while you use the location feature to identify your area and show nearby shops or relevant local services. You can deny or turn off location permission in your device settings; some location-based features may then be unavailable. The app may register a push-notification token and basic device/platform details so order and shop notifications can be delivered.')}
+        {section('3. Photos and camera',
+          'If you choose to take or upload a shop, product or payment QR image, the app processes and compresses that image before saving it with the related shop or product information. Do not upload images containing information you do not want to share with the relevant shop or app users.')}
+        {section('4. How we use information',
+          'We use information to create and secure accounts, show shops and products, process and manage orders, support delivery or pickup, maintain seller inventory, display reviews and offers, manage optional Khata records, send order/offer notifications, respond to support requests and maintain the safety and operation of NearKart.')}
+        {section('5. Service providers and sharing',
+          'NearKart uses Supabase for account authentication, database and backend services, and Expo notification services to help deliver push notifications. Information is shared with the shop involved in an order when needed to fulfil that order, and with service providers that operate app features. We do not state that information is never shared: sharing is limited to these purposes, your choices and applicable legal requirements.')}
+        {section('6. Payments',
+          'NearKart may display a seller-provided UPI ID or QR code and payment-related order details such as a UTR/reference number where you submit one. UPI payments are handled through the payment app or provider you choose. Never share your UPI PIN, banking password or OTP in NearKart or with a seller.')}
+        {section('7. Data retention and security',
+          'Information is retained for as long as needed to provide the service, maintain account and order records, resolve disputes, protect users and meet legal or accounting obligations. We use service-provider security features and access controls, but no internet transmission or electronic storage method can be guaranteed to be completely secure.')}
+        {section('8. Your choices and requests',
+          'You can manage app permissions from your device settings and contact NearKart to request access to, correction of or deletion of personal information. Some order, payment, seller or legal records may need to be retained where required by law or for legitimate business records. To request account or data deletion, contact us using the details below and include the email address associated with your account.')}
+        {section('9. Children',
+          'NearKart is not designed for children under 13 to create accounts independently. If you believe a child has provided personal information, contact us so we can review the request.')}
+        {section('10. Changes to this policy',
+          'We may update this policy when app features or legal requirements change. The latest in-app version will show its updated date.')}
+        {section('11. Contact NearKart',
+          'For privacy questions, data correction or deletion requests, contact supportnearkart@gmail.com or call +91 8144937920.')}
+        <View style={{ backgroundColor: '#fff4df', borderRadius: 12, padding: 12, marginTop: 2 }}>
+          <Text style={{ color: '#80520b', fontSize: 12, lineHeight: 18 }}>
+            This in-app policy is an initial notice based on the current app features. Before publishing, NearKart must also host this policy on a public webpage and verify that every statement matches the live app, backend configuration and actual data practices.
+          </Text>
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
 // ======================================================================
 // SUPPORT PAGE (buyer + seller): e-mail and phone number of NearKart support
 // ======================================================================
@@ -3328,7 +3381,7 @@ function SellerSetupScreen({ defaultArea, onCreated, onLogout, loadErr }) {
 // - logged-in buyer : account card + colourful tiles + Log Out, NO business card
 // ======================================================================
 function Profile({ session, needLogin, onPartner, onLogout, onOrders, lang, onLang, profile, loc, onLoc,
-  onAddr, onSupport, onNotif, onKhata }) {
+  onAddr, onSupport, onNotif, onKhata, onPrivacy }) {
   const guest = !session;
   const display = profile.name || (session ? session.email : 'Guest');
   const langName = (LANGS.find((l) => l[0] === lang) || LANGS[0])[1];
@@ -3390,6 +3443,7 @@ function Profile({ session, needLogin, onPartner, onLogout, onOrders, lang, onLa
         )}
         <ProfTile ic="🌐" bg="#d9f6ff" title="Language" sub={langName} onPress={() => onLang('pick')} />
         <ProfTile ic="🎧" bg="#dcf5e9" title="Customer Support" sub={SUPPORT_PHONE} onPress={onSupport} />
+        <ProfTile ic="🔒" bg="#e3ecff" title="Privacy Policy" sub="How NearKart uses your information" onPress={onPrivacy} />
         {!guest && (
           <ProfTile ic="↪" bg="#fdecef" title="Log Out" sub="End shopping session" onPress={onLogout} danger />
         )}
@@ -4646,6 +4700,7 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloa
   if (page === 'sales') return <SellerSales os={os} onBack={back} />;
   if (page === 'reviews') return <SellerReviews shop={shop} onBack={back} />;
   if (page === 'support') return <SupportPage onBack={back} color={TEAL} />;
+  if (page === 'privacy') return <PrivacyPolicyPage onBack={back} color={BLUE} />;
   if (page === 'notif') {
     return <SellerNotifications os={os} products={products} vib={vib} setVib={toggleVib}
       openOrder={openOrder} goInventory={() => setPage('inventory')} onBack={back} />;
@@ -4723,6 +4778,7 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloa
           onPress={() => setPage('notif')} />
         <ProfTile ic="🌐" bg="#e3ecff" title="Language" sub={langName} onPress={() => onLang('pick')} />
         <ProfTile ic="🎧" bg="#dcf5e9" title="Customer Support" sub={SUPPORT_PHONE} onPress={() => setPage('support')} />
+        <ProfTile ic="🔒" bg="#e3ecff" title="Privacy Policy" sub="How NearKart uses your information" onPress={() => setPage('privacy')} />
         <ProfTile ic="↪" bg="#fdecef" title="Log Out" sub="Logout from your seller account" onPress={onLogout} danger />
       </View>
 
@@ -5628,6 +5684,8 @@ export default function App() {
     body = <BuyerKhata session={session} onBack={() => setPage(null)} />;
   } else if (page === 'support') {
     body = <SupportPage onBack={() => setPage(null)} />;
+  } else if (page === 'privacy') {
+    body = <PrivacyPolicyPage onBack={() => setPage(null)} />;
   } else if (page === 'addr') {
     body = <AddressPage profile={profile} onSave={saveProfile} loc={loc} onLoc={() => setLocOpen(true)}
       onBack={() => setPage(null)} />;
@@ -5652,7 +5710,8 @@ export default function App() {
     body = <Profile session={session} needLogin={needLogin} onPartner={() => setAuthRole('seller')}
       onLogout={logout} onOrders={() => pick('orders')} lang={lang} onLang={onLang} profile={profile}
       loc={loc} onLoc={() => setLocOpen(true)} onAddr={() => setPage('addr')}
-      onSupport={() => setPage('support')} onNotif={() => setPage('notif')} onKhata={() => setPage('khata')} />;
+      onSupport={() => setPage('support')} onNotif={() => setPage('notif')} onKhata={() => setPage('khata')}
+      onPrivacy={() => setPage('privacy')} />;
   }
 
   return (
