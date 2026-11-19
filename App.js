@@ -193,6 +193,8 @@ let Loc = null;
 try { Loc = require('expo-location'); } catch (e) { Loc = null; }
 let Pick = null;
 try { Pick = require('expo-image-picker'); } catch (e) { Pick = null; }
+let ImgManip = null;
+try { ImgManip = require('expo-image-manipulator'); } catch (e) { ImgManip = null; }
 let ExLink = null;
 try { ExLink = require('expo-linking'); } catch (e) { ExLink = null; }
 
@@ -240,84 +242,73 @@ async function detectArea() {
 }
 
 
-// Pick an image from the phone gallery
-// Returns a data URI or null when cancelled
-async function pickImage(opt) {
-  const o = opt || {};
-
-  if (!Pick) {
-    throw new Error('Image upload is not available. Install expo-image-picker.');
+// All user-selected photos are converted to JPEG and compressed below 100 KB
+// before they are saved in NearKart (shop, product and QR images).
+const MAX_PHOTO_BYTES = 100 * 1024;
+function base64Bytes(value) {
+  const b = String(value || '');
+  const padding = b.endsWith('==') ? 2 : b.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((b.length * 3) / 4) - padding);
+}
+async function compressPhotoUnder100KB(uri, originalWidth) {
+  if (!ImgManip || !ImgManip.manipulateAsync) {
+    throw new Error('Photo compression is unavailable. Install expo-image-manipulator and rebuild the app.');
   }
-
-  const perm = await Pick.requestMediaLibraryPermissionsAsync();
-
-  if (!perm || perm.granted === false) {
-    throw new Error('Photo permission was not given');
+  const startWidth = Math.min(Math.max(Number(originalWidth) || 1600, 320), 1600);
+  const qualities = [0.78, 0.70, 0.62, 0.54, 0.46, 0.40, 0.35, 0.30];
+  let last = null;
+  for (let i = 0; i < qualities.length; i += 1) {
+    const width = Math.max(320, Math.round(startWidth * Math.pow(0.82, i)));
+    const result = await ImgManip.manipulateAsync(
+      uri,
+      [{ resize: { width } }],
+      { compress: qualities[i], format: ImgManip.SaveFormat ? ImgManip.SaveFormat.JPEG : 'jpeg', base64: true }
+    );
+    last = result;
+    if (result && result.base64 && base64Bytes(result.base64) < MAX_PHOTO_BYTES) {
+      return 'data:image/jpeg;base64,' + result.base64;
+    }
   }
-
-  const r = await Pick.launchImageLibraryAsync({
-    mediaTypes: Pick.MediaTypeOptions
-      ? Pick.MediaTypeOptions.Images
-      : ['images'],
-    allowsEditing: true,
-    ...(o.aspect ? { aspect: o.aspect } : {}),
-    quality: o.quality || 0.5,
-    base64: true,
-  });
-
-  if (!r || r.canceled || r.cancelled) return null;
-
-  const a = r.assets && r.assets[0];
-
-  if (!a || !a.base64) {
-    throw new Error('Could not read the image. Please try another photo.');
-  }
-
-  if (a.base64.length > (o.maxLen || 900000)) {
-    throw new Error('Image is too large. Please choose a smaller image.');
-  }
-
-  return 'data:' + (a.mimeType || 'image/jpeg') + ';base64,' + a.base64;
+  throw new Error('Photo could not be reduced below 100 KB. Please choose another photo.');
 }
 
-
-// Take a photo using the camera
-async function takeImage(opt) {
+// Pick an image from the phone gallery
+// Returns a compressed data URI (photo binary is always below 100 KB) or null when cancelled.
+async function pickImage(opt) {
   const o = opt || {};
-
-  if (!Pick) {
-    throw new Error('Image upload is not available. Install expo-image-picker.');
-  }
-
-  const perm = await Pick.requestCameraPermissionsAsync();
-
-  if (!perm || perm.granted === false) {
-    throw new Error('Camera permission was not given');
-  }
-
-  const r = await Pick.launchCameraAsync({
-    mediaTypes: Pick.MediaTypeOptions
-      ? Pick.MediaTypeOptions.Images
-      : ['images'],
+  if (!Pick) throw new Error('Image upload is not available. Install expo-image-picker.');
+  const perm = await Pick.requestMediaLibraryPermissionsAsync();
+  if (!perm || perm.granted === false) throw new Error('Photo permission was not given');
+  const r = await Pick.launchImageLibraryAsync({
+    mediaTypes: Pick.MediaTypeOptions ? Pick.MediaTypeOptions.Images : ['images'],
     allowsEditing: true,
     ...(o.aspect ? { aspect: o.aspect } : {}),
-    quality: o.quality || 0.5,
-    base64: true,
+    quality: 1,
+    base64: false,
   });
-
   if (!r || r.canceled || r.cancelled) return null;
+  const asset = r.assets && r.assets[0];
+  if (!asset || !asset.uri) throw new Error('Could not read the image. Please try another photo.');
+  return compressPhotoUnder100KB(asset.uri, asset.width);
+}
 
-  const a = r.assets && r.assets[0];
-
-  if (!a || !a.base64) {
-    throw new Error('Could not read the photo. Please try again.');
-  }
-
-  if (a.base64.length > (o.maxLen || 900000)) {
-    throw new Error('Image is too large. Please choose a smaller photo.');
-  }
-
-  return 'data:' + (a.mimeType || 'image/jpeg') + ';base64,' + a.base64;
+// Take a photo using the camera, then apply the same strict 100 KB compression.
+async function takeImage(opt) {
+  const o = opt || {};
+  if (!Pick) throw new Error('Image upload is not available. Install expo-image-picker.');
+  const perm = await Pick.requestCameraPermissionsAsync();
+  if (!perm || perm.granted === false) throw new Error('Camera permission was not given');
+  const r = await Pick.launchCameraAsync({
+    mediaTypes: Pick.MediaTypeOptions ? Pick.MediaTypeOptions.Images : ['images'],
+    allowsEditing: true,
+    ...(o.aspect ? { aspect: o.aspect } : {}),
+    quality: 1,
+    base64: false,
+  });
+  if (!r || r.canceled || r.cancelled) return null;
+  const asset = r.assets && r.assets[0];
+  if (!asset || !asset.uri) throw new Error('Could not read the photo. Please try again.');
+  return compressPhotoUnder100KB(asset.uri, asset.width);
 }
 
 
