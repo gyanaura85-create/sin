@@ -1332,7 +1332,9 @@ const inStock = (p) => Number(p.online_qty) > 0;
 const isOfferLive = (x) => !!(x && x.offer) &&
   (!x.offer_end_date || new Date(String(x.offer_end_date).slice(0, 10) + 'T23:59:59') >= new Date());
 function shopDistanceKm(shop, loc) {
-  if (!shop || !loc || !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng)) ||
+  if (!shop || !loc || loc.lat == null || loc.lng == null ||
+      shop.latitude == null || shop.longitude == null ||
+      !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng)) ||
       !Number.isFinite(Number(shop.latitude)) || !Number.isFinite(Number(shop.longitude))) return null;
   const rad = (v) => v * Math.PI / 180;
   const dLat = rad(Number(shop.latitude) - Number(loc.lat));
