@@ -113,9 +113,9 @@ const SPAGE = 20;       // seller orders page size
 const SUPPORT_EMAIL = 'ssupportnearkert@gmail.com';
 const SUPPORT_PHONE = '8144937920';
 
-const BLUE = '#0b4fc2', DARK = '#0a3a99', INK = '#0b1f4d', MUTE = '#5b6a86';
-const BG = '#f6f8fc', LINE = '#dbe3f3', GREEN = '#067a4e', RED = '#c81e4a', LIME = '#6fdc7d', ORANGE = '#d9730d';
-const PURPLE = '#6a3fc2', TEAL = '#0e8f8f', PINK = '#d6336c', AMBER = '#e08a00', GOLD = '#f5a300';
+const BLUE = '#2563eb', DARK = '#173b82', INK = '#172b4d', MUTE = '#64748b';
+const BG = '#f5f7fb', LINE = '#e3eaf4', GREEN = '#0f9668', RED = '#d9485f', LIME = '#8be0a2', ORANGE = '#e8872b';
+const PURPLE = '#7656d6', TEAL = '#159b9a', PINK = '#dc5b91', AMBER = '#e6a23c', GOLD = '#f5b942';
 
 // ----------------------------------------------------------------------
 // KHATA database functions: the function names are the ones that exist in Supabase.
@@ -1448,7 +1448,7 @@ function Stars({ v, onChange, size = 22 }) {
 }
 function Head({ title, sub, onBack, right, color }) {
   return (
-    <View style={[s.head, color && { backgroundColor: color }]}>
+    <View style={[s.head, { backgroundColor: DARK }]}>
       <View style={s.rowB}>
         {onBack ? (
           <TouchableOpacity onPress={onBack}>
@@ -5076,12 +5076,12 @@ function TabBar({ tabs, cur, onPick }) {
   return (
     <View style={s.tabbar}>
       {tabs.map(([k, ic, label, badge]) => (
-        <TouchableOpacity key={k} style={s.tab} onPress={() => onPick(k)} activeOpacity={0.7}>
-          <View>
-            <RNText style={{ fontSize: 22, opacity: cur === k ? 1 : 0.55 }}>{ic}</RNText>
+        <TouchableOpacity key={k} style={s.tab} onPress={() => onPick(k)} activeOpacity={0.75}>
+          <View style={[s.tabIconWrap, cur === k && s.tabIconWrapOn]}>
+            <RNText style={{ fontSize: 21, opacity: cur === k ? 1 : 0.68 }}>{ic}</RNText>
             {!!badge && <View style={s.badge}><RNText style={s.badgeT}>{badge}</RNText></View>}
           </View>
-          <Text style={[s.tabT, cur === k && { color: BLUE, fontWeight: '800' }]}>{label}</Text>
+          <Text style={[s.tabT, cur === k && { color: BLUE, fontWeight: '900' }]}>{label}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -6152,28 +6152,28 @@ export default function App() {
 // STYLES
 // ======================================================================
 const s = StyleSheet.create({
-  btn: { backgroundColor: BLUE, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16,
-    alignItems: 'center', justifyContent: 'center', minHeight: 46 },
+  btn: { backgroundColor: BLUE, borderRadius: 15, paddingVertical: 13, paddingHorizontal: 17,
+    alignItems: 'center', justifyContent: 'center', minHeight: 48, shadowColor: '#1d4ed8', shadowOpacity: 0.12, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   btnS: { paddingVertical: 8, paddingHorizontal: 12, minHeight: 36, borderRadius: 12 },
   btnO: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: BLUE },
   btnR: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: RED },
   btnT: { color: '#fff', fontWeight: '800', fontSize: 15 },
   label: { fontSize: 12, color: MUTE, fontWeight: '700', marginBottom: 4 },
-  input: { borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 12,
-    paddingVertical: 10, fontSize: 15, color: INK, marginBottom: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 18, backgroundColor: '#fff', borderWidth: 1,
+  input: { borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 14,
+    paddingVertical: 12, fontSize: 15, color: INK, marginBottom: 8 },
+  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1,
     borderColor: LINE, marginRight: 8, marginBottom: 8 },
   chipOn: { backgroundColor: BLUE, borderColor: BLUE },
   tag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, fontSize: 12, fontWeight: '700',
     overflow: 'hidden', alignSelf: 'flex-start' },
   tagS: { fontSize: 10, paddingHorizontal: 6, paddingVertical: 2 },
   msg: { padding: 12, borderRadius: 12, marginVertical: 6 },
-  head: { backgroundColor: BLUE, paddingTop: (Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 12) + 8,
-    paddingHorizontal: 16, paddingBottom: 16 },
+  head: { backgroundColor: DARK, paddingTop: (Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 12) + 10,
+    paddingHorizontal: 17, paddingBottom: 19, borderBottomLeftRadius: 22, borderBottomRightRadius: 22 },
   headT: { color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 8 },
   rowB: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  card: { backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: LINE, padding: 14,
-    marginHorizontal: 14, marginTop: 12 },
+  card: { backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: LINE, padding: 15,
+    marginHorizontal: 14, marginTop: 13, shadowColor: '#20365d', shadowOpacity: 0.045, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
   h: { fontSize: 17, fontWeight: '800', color: INK, marginBottom: 8 },
   sub: { fontSize: 12.5, color: MUTE },
   shopN: { fontSize: 16, fontWeight: '800', color: INK },
@@ -6181,15 +6181,15 @@ const s = StyleSheet.create({
   empty: { textAlign: 'center', color: MUTE, padding: 24, fontSize: 15 },
   price: { fontWeight: '800', color: INK, fontSize: 15 },
   offer: { color: ORANGE, fontWeight: '700', marginTop: 4, fontSize: 12 },
-  shopCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 18,
-    borderWidth: 1, borderColor: LINE, padding: 12, marginBottom: 10 },
-  mini: { width: '48.5%', backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: LINE,
-    padding: 10, marginBottom: 10 },
+  shopCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 19,
+    borderWidth: 1, borderColor: LINE, padding: 13, marginBottom: 11, shadowColor: '#20365d', shadowOpacity: 0.04, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  mini: { width: '48.5%', backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: LINE,
+    padding: 11, marginBottom: 11 },
   miniN: { fontSize: 14, fontWeight: '800', color: INK },
   arrow: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#e8f0ff', alignItems: 'center',
     justifyContent: 'center' },
-  pcard: { width: '48.5%', backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: LINE,
-    padding: 10, marginBottom: 10 },
+  pcard: { width: '48.5%', backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: LINE,
+    padding: 11, marginBottom: 11 },
   tile: { width: '23%', paddingVertical: 12, borderRadius: 16, alignItems: 'center', marginBottom: 10 },
   tileT: { fontSize: 11, fontWeight: '700', color: INK, marginTop: 4 },
   banner: { marginHorizontal: 14, marginTop: 12, backgroundColor: '#e3f4e8', flexDirection: 'row',
@@ -6211,8 +6211,8 @@ const s = StyleSheet.create({
   camBadge: { position: 'absolute', right: -4, bottom: -4, width: 26, height: 26, borderRadius: 13,
     backgroundColor: '#fff', borderWidth: 1, borderColor: LINE, alignItems: 'center', justifyContent: 'center' },
   overlay: { flex: 1, backgroundColor: 'rgba(10,20,50,0.45)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18,
-    paddingBottom: 28, maxHeight: '90%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 19,
+    paddingBottom: 30, maxHeight: '90%' },
   grab: { width: 44, height: 5, borderRadius: 3, backgroundColor: '#cfd6e4', alignSelf: 'center',
     marginBottom: 12 },
   totalBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -6247,7 +6247,9 @@ const s = StyleSheet.create({
   alertBar: { backgroundColor: ORANGE, padding: 12, flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'center' },
   tabbar: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: LINE,
-    paddingTop: 6, paddingBottom: 10 },
-  tab: { flex: 1, alignItems: 'center' },
-  tabT: { fontSize: 10, color: MUTE, marginTop: 2 },
+    paddingTop: 7, paddingBottom: Platform.OS === 'android' ? 9 : 14, paddingHorizontal: 4 },
+  tab: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 52 },
+  tabIconWrap: { width: 42, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  tabIconWrapOn: { backgroundColor: '#eaf1ff' },
+  tabT: { fontSize: 10, color: MUTE, marginTop: 3 },
 });
