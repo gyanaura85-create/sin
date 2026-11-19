@@ -5460,7 +5460,10 @@ export default function App() {
     return () => { ON_EXPIRED = null; };
   }, []);
 
-  useEffect(() => {\n    const t = setTimeout(() => setSplashMinDone(true), 2600);\n    return () => clearTimeout(t);\n  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => setSplashMinDone(true), 2600);
+    return () => clearTimeout(t);
+  }, []);
 
   // ---------- password reset deep link ----------
   useEffect(() => {
