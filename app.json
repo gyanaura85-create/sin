@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "icon": "./file_00000000fdfc820a91a9d1a52599f241.png",
+    "icon": "./1795078951005.png",
     "plugins": [
       [
         "expo-notifications",
@@ -20,7 +20,7 @@
     "android": {
       "package": "com.nearkart.app",
       "adaptiveIcon": {
-        "foregroundImage": "./file_00000000fdfc820a91a9d1a52599f241.png",
+        "foregroundImage": "./1795078951005.png",
         "backgroundColor": "#FFFFFF"
       }
     }
