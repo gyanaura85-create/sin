@@ -5344,7 +5344,8 @@ export default function App() {
   const [shops, setShops] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [startupReady, setStartupReady] = useState(false);\n  const [splashMinDone, setSplashMinDone] = useState(false);
+  const [startupReady, setStartupReady] = useState(false);
+  const [splashMinDone, setSplashMinDone] = useState(false);
   const [err, setErr] = useState('');
   const [cart, setCart] = useState(null);
   const [tab, setTab] = useState('home');
@@ -5572,7 +5573,9 @@ export default function App() {
   // ======================================================================
 
   // language screen: only when the user taps Language inside Profile (or seller More)
-  if (!startupReady || !splashMinDone) return <NearKartSplash />;\n\n  if (showLang) {
+  if (!startupReady || !splashMinDone) return <NearKartSplash />;
+
+  if (showLang) {
     return (
       <LangScreen current={lang} onPick={changeLang} onClose={() => setShowLang(false)} />
     );
