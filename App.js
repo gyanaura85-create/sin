@@ -5305,7 +5305,7 @@ function NearKartSplash() {
   return (
     <View style={{ flex: 1, backgroundColor: '#f6f8fc', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
       <StatusBar barStyle="dark-content" backgroundColor="#f6f8fc" />
-      <Animated.Image source={require('./file_00000000fdfc820a91a9d1a52599f241.png')}
+      <Animated.Image source={require('./1795078951005.png')}
         resizeMode="contain"
         style={{ width: 148, height: 148, opacity: logoOpacity, transform: [{ scale: logoScale }] }} />
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 20 }}>
