@@ -98,7 +98,7 @@
  */
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text as RNText, TextInput as RNTextInput, ScrollView, TouchableOpacity, StyleSheet,
+  Animated, View, Text as RNText, TextInput as RNTextInput, ScrollView, TouchableOpacity, StyleSheet,
   ActivityIndicator, SafeAreaView, StatusBar, RefreshControl, Modal, Alert, Vibration, Image,
   Linking, Switch, KeyboardAvoidingView, Platform,
 } from 'react-native';
