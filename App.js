@@ -2900,7 +2900,9 @@ function TrackOrder({ o, onBack, onReorder, review, onRate }) {
         </View>
         <View style={[s.rowB, { marginTop: 6 }]}>
           <Text style={s.sub}>Delivery Charge</Text>
-          <Text style={{ color: GREEN, fontWeight: '700' }}>Free</Text>
+          <RNText style={{ color: INK, fontWeight: '700' }}>
+            {money(o.pickup ? 0 : Number(o.delivery_fee !== undefined && o.delivery_fee !== null ? o.delivery_fee : (o.deliveryFee !== undefined && o.deliveryFee !== null ? o.deliveryFee : Math.max(0, Number(o.total || 0) - Number(sub || 0)))))}
+          </RNText>
         </View>
         <View style={[s.rowB, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: LINE }]}>
           <Text style={s.shopN}>Total Amount</Text>
@@ -3718,7 +3720,9 @@ function OrderDetails({ o, onBack, load }) {
         </View>
         <View style={[s.rowB, { marginTop: 6 }]}>
           <Text style={s.sub}>Delivery Charge</Text>
-          <Text style={{ color: GREEN, fontWeight: '700' }}>Free</Text>
+          <RNText style={{ color: INK, fontWeight: '700' }}>
+            {money(o.pickup ? 0 : Number(o.delivery_fee !== undefined && o.delivery_fee !== null ? o.delivery_fee : (o.deliveryFee !== undefined && o.deliveryFee !== null ? o.deliveryFee : Math.max(0, Number(o.total || 0) - Number(sub || 0)))))}
+          </RNText>
         </View>
         <View style={[s.rowB, { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: LINE }]}>
           <Text style={s.shopN}>Total Amount</Text>
@@ -4333,7 +4337,7 @@ function SellerDelivery({ shop, onBack }) {
         <Field label="Delivery radius (km)" value={d.radius} onChangeText={(v) => setD({ ...d, radius: v })} keyboardType="decimal-pad" />
         <Field label="Minimum order (₹)" value={d.min} onChangeText={(v) => setD({ ...d, min: v })} keyboardType="decimal-pad" />
         <Btn kind="g" t="Save" onPress={save} />
-        <Text style={[s.sub, { marginTop: 8 }]}>These settings are saved on this phone and help you plan. Delivery charge stays free for now.</Text>
+        <Text style={[s.sub, { marginTop: 8 }]}>These settings are saved on this phone and help you plan. Set standard and area-wise delivery charges under Area Delivery Charges.</Text>
       </View>
       <View style={{ height: 30 }} />
     </ScrollView>
