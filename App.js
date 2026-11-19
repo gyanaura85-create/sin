@@ -250,18 +250,24 @@ function base64Bytes(value) {
   const padding = b.endsWith('==') ? 2 : b.endsWith('=') ? 1 : 0;
   return Math.max(0, Math.floor((b.length * 3) / 4) - padding);
 }
-async function compressPhotoUnder100KB(uri, originalWidth) {
+async function compressPhotoUnder100KB(uri, originalWidth, originalHeight) {
   if (!ImgManip || !ImgManip.manipulateAsync) {
     throw new Error('Photo compression is unavailable. Install expo-image-manipulator and rebuild the app.');
   }
-  const startWidth = Math.min(Math.max(Number(originalWidth) || 1600, 320), 1600);
+  const sourceWidth = Number(originalWidth) || 1600;
+  const sourceHeight = Number(originalHeight) || sourceWidth;
+  const landscape = sourceWidth >= sourceHeight;
+  const startSide = Math.min(Math.max(Math.max(sourceWidth, sourceHeight), 320), 1600);
   const qualities = [0.78, 0.70, 0.62, 0.54, 0.46, 0.40, 0.35, 0.30];
   let last = null;
   for (let i = 0; i < qualities.length; i += 1) {
-    const width = Math.max(320, Math.round(startWidth * Math.pow(0.82, i)));
+    const side = Math.max(320, Math.round(startSide * Math.pow(0.82, i)));
+    const resize = landscape
+      ? { width: Math.round(side * (sourceWidth / Math.max(sourceWidth, sourceHeight))) }
+      : { height: Math.round(side * (sourceHeight / Math.max(sourceWidth, sourceHeight))) };
     const result = await ImgManip.manipulateAsync(
       uri,
-      [{ resize: { width } }],
+      [{ resize }],
       { compress: qualities[i], format: ImgManip.SaveFormat ? ImgManip.SaveFormat.JPEG : 'jpeg', base64: true }
     );
     last = result;
@@ -289,7 +295,7 @@ async function pickImage(opt) {
   if (!r || r.canceled || r.cancelled) return null;
   const asset = r.assets && r.assets[0];
   if (!asset || !asset.uri) throw new Error('Could not read the image. Please try another photo.');
-  return compressPhotoUnder100KB(asset.uri, asset.width);
+  return compressPhotoUnder100KB(asset.uri, asset.width, asset.height);
 }
 
 // Take a photo using the camera, then apply the same strict 100 KB compression.
