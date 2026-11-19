@@ -383,6 +383,31 @@ const pickProductPhoto = () =>
     maxLen: 300000,
   });
 
+// Advertisement photo: horizontal banner, JPEG, maximum 500 KB.
+async function pickAdPhoto() {
+  if (!Pick || !ImgManip) throw new Error('Advertisement photo upload is unavailable. Please update the app.');
+  const perm = await Pick.requestMediaLibraryPermissionsAsync();
+  if (!perm || perm.granted === false) throw new Error('Photo permission was not given');
+  const r = await Pick.launchImageLibraryAsync({
+    mediaTypes: Pick.MediaTypeOptions ? Pick.MediaTypeOptions.Images : ['images'],
+    allowsEditing: true, aspect: [16, 9], quality: 1, base64: false,
+  });
+  if (!r || r.canceled || r.cancelled) return null;
+  const asset = r.assets && r.assets[0];
+  if (!asset || !asset.uri) throw new Error('Could not read the advertisement photo.');
+  const widths = [1280, 1120, 960, 840, 720, 640];
+  const qualities = [0.84, 0.76, 0.68, 0.60, 0.52, 0.44];
+  for (let i = 0; i < widths.length; i += 1) {
+    for (let j = 0; j < qualities.length; j += 1) {
+      const out = await ImgManip.manipulateAsync(asset.uri, [{ resize: { width: widths[i] } }],
+        { compress: qualities[j], format: ImgManip.SaveFormat ? ImgManip.SaveFormat.JPEG : 'jpeg', base64: true });
+      const bytes = base64Bytes(out && out.base64);
+      if (out && out.uri && bytes > 0 && bytes <= 500 * 1024) return { uri: out.uri, bytes };
+    }
+  }
+  throw new Error('Photo ko 500 KB ke andar compress nahi kar paye. Dusri photo try karo.');
+}
+
 
 // ======================================================================
 // LANGUAGE (English / Hindi / Odia). Text missing here simply stays English.
@@ -1306,6 +1331,16 @@ const inStock = (p) => Number(p.online_qty) > 0;
 // a shop offer is live until its end date (no end date = always live)
 const isOfferLive = (x) => !!(x && x.offer) &&
   (!x.offer_end_date || new Date(String(x.offer_end_date).slice(0, 10) + 'T23:59:59') >= new Date());
+function shopDistanceKm(shop, loc) {
+  if (!shop || !loc || !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng)) ||
+      !Number.isFinite(Number(shop.latitude)) || !Number.isFinite(Number(shop.longitude))) return null;
+  const rad = (v) => v * Math.PI / 180;
+  const dLat = rad(Number(shop.latitude) - Number(loc.lat));
+  const dLng = rad(Number(shop.longitude) - Number(loc.lng));
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(Number(loc.lat))) * Math.cos(rad(Number(shop.latitude))) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 // ======================================================================
 // SMALL UI PARTS
 // ======================================================================
@@ -1997,6 +2032,49 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
           </View>
         </View>
       )}
+
+      {!filtering && (() => {
+        const adShops = shops.filter((x) => isOfferLive(x) && x.offer_image_url)
+          .map((shop) => ({ shop, distance: shopDistanceKm(shop, loc) }))
+          .sort((a, b) => {
+            if (a.distance == null && b.distance == null) {
+              const sameA = loc && loc.area && String(a.shop.area || '').toLowerCase().includes(String(loc.area).toLowerCase()) ? 1 : 0;
+              const sameB = loc && loc.area && String(b.shop.area || '').toLowerCase().includes(String(loc.area).toLowerCase()) ? 1 : 0;
+              return sameB - sameA;
+            }
+            if (a.distance == null) return 1;
+            if (b.distance == null) return -1;
+            return a.distance - b.distance;
+          });
+        if (!adShops.length) return null;
+        return (
+          <View style={{ paddingTop: 14, paddingBottom: 5 }}>
+            <View style={[s.rowB, { paddingHorizontal: 14, marginBottom: 10 }]}>
+              <View><Text style={s.h}>📢 Shop Advertisement</Text><Text style={s.sub}>Live offers from shops near you</Text></View>
+              <RNText style={{ color: MUTE, fontSize: 12 }}>Swipe →</RNText>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 14, gap: 12 }}>
+              {adShops.map(({ shop, distance }) => (
+                <TouchableOpacity key={shop.id} activeOpacity={0.88} onPress={() => onShop(shop)}
+                  style={{ width: 270, backgroundColor: '#fff', borderRadius: 18, padding: 10,
+                    borderWidth: 1, borderColor: LINE, elevation: 2 }}>
+                  <Image source={{ uri: shop.offer_image_url }} style={{ width: '100%', height: 132,
+                    borderRadius: 13, backgroundColor: '#edf2fb' }} resizeMode="cover" />
+                  <RNText style={{ color: INK, fontSize: 14, fontWeight: '900', marginTop: 9 }} numberOfLines={1}>{shop.name}</RNText>
+                  <RNText style={{ color: PINK, fontSize: 13, fontWeight: '800', marginTop: 3 }} numberOfLines={2}>{shop.offer}</RNText>
+                  <View style={[s.rowB, { marginTop: 7 }]}>
+                    <RNText style={s.sub} numberOfLines={1}>{shop.area || 'Nearby shop'}</RNText>
+                    <RNText style={{ color: GREEN, fontSize: 10, fontWeight: '800' }}>
+                      {distance == null ? 'Nearby' : distance < 1 ? (Math.round(distance * 1000) + ' m') : (distance.toFixed(1) + ' km')}
+                    </RNText>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        );
+      })()}
 
       {mCats.length > 0 && (
         <View style={s.card}>
@@ -3563,10 +3641,87 @@ async function patchShop(shop, setShop, b) {
   setShop(r && r.id ? { ...shop, ...r } : { ...shop, ...b });
 }
 
+// Upload advertisement banners to the existing offer-media bucket.
+async function uploadOfferPhoto(shop, photo) {
+  await api('/auth/v1/user'); // refresh session if it is close to expiry
+  const path = String(shop.id) + '/advertisement-' + Date.now() + '.jpg';
+  const blob = await fetch(photo.uri).then((r) => {
+    if (!r.ok) throw new Error('Could not read the compressed advertisement photo.');
+    return r.blob();
+  });
+  const response = await fetch(URL_ + '/storage/v1/object/offer-media/' +
+    path.split('/').map(encodeURIComponent).join('/'), {
+    method: 'POST',
+    headers: { apikey: KEY, Authorization: 'Bearer ' + (SESSION && SESSION.token),
+      'Content-Type': 'image/jpeg', 'x-upsert': 'false' },
+    body: blob,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || data.error || 'Advertisement photo upload failed.');
+  return { url: URL_ + '/storage/v1/object/public/offer-media/' +
+    path.split('/').map(encodeURIComponent).join('/') };
+}
+
+async function removeOfferPhoto(url) {
+  if (!url || typeof url !== 'string') return;
+  const marker = '/storage/v1/object/public/offer-media/';
+  const at = url.indexOf(marker);
+  if (at < 0) return;
+  const path = url.slice(at + marker.length).split('/').map((x) => {
+    try { return decodeURIComponent(x); } catch (e) { return x; }
+  }).join('/');
+  if (!path) return;
+  try {
+    await api('/auth/v1/user');
+    await fetch(URL_ + '/storage/v1/object/offer-media', {
+      method: 'DELETE',
+      headers: { apikey: KEY, Authorization: 'Bearer ' + (SESSION && SESSION.token), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefixes: [path] }),
+    });
+  } catch (e) { /* best-effort cleanup of old banner */ }
+}
+
+async function publishShopAdvertisement(shop, setShop, offer, endDate, photo) {
+  const cleanOffer = String(offer || '').trim();
+  let imageUrl = shop.offer_image_url || null;
+  let uploaded = null;
+  if (cleanOffer && photo && photo.uri) {
+    uploaded = await uploadOfferPhoto(shop, photo);
+    imageUrl = uploaded.url;
+  }
+  if (!cleanOffer) imageUrl = null;
+  try {
+    await newRpc('update_my_shop_ad', {
+      p_shop_id: shop.id, p_offer: cleanOffer || null,
+      p_offer_end_date: cleanOffer ? (String(endDate || '').trim() || null) : null,
+      p_offer_image_url: imageUrl,
+    });
+    setShop({ ...shop, offer: cleanOffer || null,
+      offer_end_date: cleanOffer ? (String(endDate || '').trim() || null) : null,
+      offer_image_url: imageUrl });
+    if (shop.offer_image_url && shop.offer_image_url !== imageUrl) removeOfferPhoto(shop.offer_image_url);
+  } catch (e) {
+    if (uploaded) removeOfferPhoto(uploaded.url);
+    throw e;
+  }
+}
+
 function SellerDash({ shop, setShop, os, products, goTab, openOrder, reloadP, ordersErr, onBell }) {
   const [offer, setOffer] = useState(shop.offer || '');
   const [offerEndDate, setOfferEndDate] = useState(shop.offer_end_date || '');
+  const [offerImage, setOfferImage] = useState(null);
+  const [adBusy, setAdBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const publishAd = async () => {
+    if (!offer.trim()) { setMsg('Offer text enter karo.'); return; }
+    if (!offerImage && !shop.offer_image_url) { setMsg('Advertisement photo select karo (max 500 KB).'); return; }
+    setAdBusy(true);
+    try {
+      await publishShopAdvertisement(shop, setShop, offer, offerEndDate, offerImage);
+      setOfferImage(null); setMsg('✅ Advertisement published');
+    } catch (e) { setMsg(errMsg(e)); }
+    finally { setAdBusy(false); }
+  };
   const patch = async (b) => {
     try { await patchShop(shop, setShop, b); setMsg('✅ Saved'); } catch (e) { setMsg(errMsg(e)); }
   };
@@ -3623,19 +3778,18 @@ function SellerDash({ shop, setShop, os, products, goTab, openOrder, reloadP, or
           <RNText style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>{shop.offer}</RNText>
         </View>}
         <Field label="Offer (shown to customers)" value={offer} onChangeText={setOffer} placeholder="Weekend special: 20% OFF" autoCapitalize="sentences" />
-        <Field
-  label="Advertisement End Date (optional)"
-  value={offerEndDate}
-  onChangeText={setOfferEndDate}
-  placeholder="YYYY-MM-DD (Example: 2026-12-31)"
-/>
-        <Btn
-  t="Publish"
-  onPress={() => patch({
-    offer: offer.trim() || null,
-    offer_end_date: offerEndDate.trim() || null
-  })}
-/>
+        <Field label="Advertisement End Date (optional)" value={offerEndDate}
+          onChangeText={setOfferEndDate} placeholder="YYYY-MM-DD (Example: 2026-12-31)" />
+        <TouchableOpacity onPress={async () => {
+          try { const picked = await pickAdPhoto(); if (picked) setOfferImage(picked); }
+          catch (e) { setMsg(e.message || 'Photo select nahi hui'); }
+        }} style={s.adPhotoButton}>
+          <RNText style={s.adPhotoButtonText}>🖼️  {offerImage ? 'Change selected advertisement photo' : 'Add advertisement photo (max 500 KB)'}</RNText>
+        </TouchableOpacity>
+        {(offerImage || shop.offer_image_url) && <Image
+          source={{ uri: offerImage ? offerImage.uri : shop.offer_image_url }} style={s.adPreview} resizeMode="cover" />}
+        {!!offerImage && <Text style={s.sub}>Selected photo: {(offerImage.bytes / 1024).toFixed(0)} KB</Text>}
+        <Btn t={adBusy ? 'Uploading…' : 'Publish Advertisement'} disabled={adBusy} onPress={publishAd} />
       </View>
       {lowP.length > 0 && (
         <View style={[s.card, { backgroundColor: '#fff8e6', borderColor: '#f3dca0' }]}>
@@ -4507,30 +4661,56 @@ function SellerInventory({ shop, products, reloadP, onBack }) {
 // ---- Deals and Offers ----
 function SellerDeals({ shop, setShop, onBack }) {
   const [offer, setOffer] = useState(shop.offer || '');
+  const [offerEndDate, setOfferEndDate] = useState(shop.offer_end_date || '');
+  const [offerImage, setOfferImage] = useState(null);
+  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const SAMPLES = ['Weekend special: 20% OFF', 'Free delivery above ₹300', 'Buy 1 Get 1 on snacks', 'Fresh vegetables - 10% OFF'];
   const save = async (v) => {
-    try { await patchShop(shop, setShop, { offer: v }); setMsg('✅ Saved'); if (!v) setOffer(''); } catch (e) { setMsg(errMsg(e)); }
+    const nextOffer = v == null ? '' : String(v);
+    if (nextOffer && !offerImage && !shop.offer_image_url) {
+      setMsg('Advertisement photo select karo (max 500 KB).'); return;
+    }
+    setBusy(true); setMsg('');
+    try {
+      await publishShopAdvertisement(shop, setShop, nextOffer, offerEndDate, nextOffer ? offerImage : null);
+      setOffer(nextOffer); setOfferImage(null);
+      if (!nextOffer) setOfferEndDate('');
+      setMsg('✅ Advertisement published');
+    } catch (e) { setMsg(errMsg(e)); }
+    finally { setBusy(false); }
   };
   return (
     <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
-      <SubHead title="Deals and Offers" sub="Create and manage deals and discounts" color={PINK} onBack={onBack} />
+      <SubHead title="Deals and Offers" sub="Create a photo advertisement for nearby buyers" color={PINK} onBack={onBack} />
       <Msg t={msg} ok={msg.startsWith('✅')} />
       {!!shop.offer && (
         <View style={[s.adBox, { marginHorizontal: 14, marginTop: 12, backgroundColor: PINK }]}>
           <RNText style={{ color: '#ffd6e4', fontSize: 12, fontWeight: '700' }}>LIVE NOW</RNText>
           <RNText style={{ color: '#fff', fontWeight: '800', fontSize: 18, marginTop: 4 }}>{shop.offer}</RNText>
+          {!!shop.offer_image_url && <Image source={{ uri: shop.offer_image_url }} style={s.adPreview} resizeMode="cover" />}
         </View>
       )}
       <View style={s.card}>
-        <Text style={s.h}>🎁 New offer</Text>
+        <Text style={s.h}>🎁 New offer advertisement</Text>
         <Field label="Offer (shown to customers)" value={offer} onChangeText={setOffer} placeholder="Weekend special: 20% OFF" autoCapitalize="sentences" />
+        <Field label="Advertisement End Date (optional)" value={offerEndDate} onChangeText={setOfferEndDate} placeholder="YYYY-MM-DD" />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
           {SAMPLES.map((x) => <Chip key={x} t={x} on={offer === x} color={PINK} onPress={() => setOffer(x)} />)}
         </View>
-        <Btn t="Publish" onPress={() => save(offer.trim() || null)} style={{ marginTop: 6, backgroundColor: PINK }} />
-        {!!shop.offer && <Btn kind="r" t="Remove offer" onPress={() => save(null)} style={{ marginTop: 8 }} />}
-        <Text style={[s.sub, { marginTop: 8 }]}>Your offer appears on the buyer home banner, shop page and in buyer notifications.</Text>
+        <TouchableOpacity onPress={async () => {
+          try { const picked = await pickAdPhoto(); if (picked) setOfferImage(picked); }
+          catch (e) { setMsg(e.message || 'Photo select nahi hui'); }
+        }} style={s.adPhotoButton}>
+          <RNText style={s.adPhotoButtonText}>🖼️  {offerImage ? 'Change selected advertisement photo' : 'Add advertisement photo (max 500 KB)'}</RNText>
+        </TouchableOpacity>
+        {(offerImage || shop.offer_image_url) && <Image source={{ uri: offerImage ? offerImage.uri : shop.offer_image_url }}
+          style={s.adPreview} resizeMode="cover" />}
+        {!!offerImage && <Text style={s.sub}>Selected photo: {(offerImage.bytes / 1024).toFixed(0)} KB</Text>}
+        <Btn t={busy ? 'Uploading…' : 'Publish Advertisement'} disabled={busy}
+          onPress={() => save(offer.trim() || null)} style={{ marginTop: 6, backgroundColor: PINK }} />
+        {!!shop.offer && <Btn kind="r" t="Remove offer" disabled={busy} onPress={() => save(null)} style={{ marginTop: 8 }} />}
+        <Text style={[s.sub, { marginTop: 8 }]}>Your advertisement appears in the buyer Home Shop Advertisement section. Tap it to open your shop.</Text>
       </View>
       <View style={{ height: 30 }} />
     </ScrollView>
@@ -5977,6 +6157,10 @@ const s = StyleSheet.create({
     backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
   abtn: { width: '48.5%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     paddingVertical: 12, borderRadius: 14, borderWidth: 1.5, marginBottom: 10 },
+  adPhotoButton: { borderWidth: 1, borderColor: '#d7c5ee', borderStyle: 'dashed',
+    borderRadius: 13, padding: 14, alignItems: 'center', marginTop: 8, marginBottom: 10, backgroundColor: '#fff8fc' },
+  adPhotoButtonText: { color: PINK, fontSize: 13, fontWeight: '800', textAlign: 'center' },
+  adPreview: { width: '100%', height: 170, borderRadius: 14, backgroundColor: '#edf2fb', marginTop: 8, marginBottom: 8 },
   adBox: { backgroundColor: BLUE, borderRadius: 14, padding: 14, marginVertical: 10 },
   billRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1,
     borderTopColor: LINE },
