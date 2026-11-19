@@ -259,7 +259,6 @@ async function compressPhotoUnder100KB(uri, originalWidth, originalHeight) {
   const landscape = sourceWidth >= sourceHeight;
   const startSide = Math.min(Math.max(Math.max(sourceWidth, sourceHeight), 320), 1600);
   const qualities = [0.78, 0.70, 0.62, 0.54, 0.46, 0.40, 0.35, 0.30];
-  let last = null;
   for (let i = 0; i < qualities.length; i += 1) {
     const side = Math.max(320, Math.round(startSide * Math.pow(0.82, i)));
     const resize = landscape
@@ -270,7 +269,6 @@ async function compressPhotoUnder100KB(uri, originalWidth, originalHeight) {
       [{ resize }],
       { compress: qualities[i], format: ImgManip.SaveFormat ? ImgManip.SaveFormat.JPEG : 'jpeg', base64: true }
     );
-    last = result;
     if (result && result.base64 && base64Bytes(result.base64) < MAX_PHOTO_BYTES) {
       return 'data:image/jpeg;base64,' + result.base64;
     }
@@ -314,7 +312,7 @@ async function takeImage(opt) {
   if (!r || r.canceled || r.cancelled) return null;
   const asset = r.assets && r.assets[0];
   if (!asset || !asset.uri) throw new Error('Could not read the photo. Please try again.');
-  return compressPhotoUnder100KB(asset.uri, asset.width);
+  return compressPhotoUnder100KB(asset.uri, asset.width, asset.height);
 }
 
 
