@@ -2511,8 +2511,15 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
   const feesReady = feesFor === shopId && !feesLoading && !feesError;
   const hasAreaFees = deliveryFees.length > 0;
   const areaHit = dtype === 'delivery' && hasAreaFees && addrText ? matchFee(deliveryFees, addrText) : null;
+  // Use India Standard Time (IST) for the automatic order-time delivery slot.
+  const istNow = new Date(Date.now() + 330 * 60000);
+  const istMinutes = istNow.getUTCHours() * 60 + istNow.getUTCMinutes();
+  const deliverySlot = istMinutes >= 360 && istMinutes < 720 ? 'Morning (6 AM–12 PM)'
+    : istMinutes >= 720 && istMinutes < 1080 ? 'Afternoon (12 PM–6 PM)'
+    : istMinutes >= 1080 && istMinutes < 1440 ? 'Evening (6 PM–12 AM)' : '';
   const shopFeeKnown = !!(cart.shop && Object.prototype.hasOwnProperty.call(cart.shop, 'delivery_charge'));
   let feeState = 'ok', deliveryFee = 0, feeNote = '', feeBad = '';
+  if (dtype === 'delivery' && !deliverySlot) { feeState = 'error'; feeBad = 'Home delivery orders can be placed between 6:00 AM and 12:00 AM IST.'; }
   if (dtype === 'pickup') {
     feeState = 'pickup';
   } else if (feesError) {
@@ -2523,16 +2530,19 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
     if (!addrText) feeState = 'address';
     else if (!areaHit) feeState = 'unavailable';
     else {
-      const af = Number(areaHit.fee);
-      if (areaHit.fee === null || areaHit.fee === undefined || areaHit.fee === '' || !Number.isFinite(af) || af < 0) {
-        feeState = 'error'; feeBad = 'The delivery fee saved for "' + areaHit.area + '" is not valid. Please contact the shop.';
-      } else { deliveryFee = af; feeNote = String(areaHit.area); }
+      const slotFee = deliverySlot.startsWith('Morning') ? areaHit.morning_fee
+        : deliverySlot.startsWith('Afternoon') ? areaHit.afternoon_fee : areaHit.evening_fee;
+      const rawFee = slotFee !== null && slotFee !== undefined && slotFee !== '' ? slotFee : areaHit.fee;
+      const af = Number(rawFee);
+      if (rawFee === null || rawFee === undefined || rawFee === '' || !Number.isFinite(af) || af < 0) {
+        feeState = 'error'; feeBad = 'The delivery charge for "' + areaHit.area + '" and ' + deliverySlot + ' is not configured. Please contact the shop.';
+      } else { deliveryFee = af; feeNote = String(areaHit.area) + ' · ' + deliverySlot; }
     }
   } else if (shopFeeKnown) {
     const sraw = cart.shop.delivery_charge;
     const sf = sraw === null || sraw === undefined || sraw === '' ? 0 : Number(sraw);
     if (!Number.isFinite(sf) || sf < 0) { feeState = 'error'; feeBad = 'This shop\'s delivery charge is not valid. Please contact the shop.'; }
-    else deliveryFee = sf;
+    else { deliveryFee = sf; feeNote = deliverySlot; }
   }
   const feeUnknown = feeState === 'ok' && !hasAreaFees && !shopFeeKnown; // shop list did not include delivery_charge: the server adds it
   const orderTotal = Math.round((total + deliveryFee) * 100) / 100;
@@ -2951,6 +2961,12 @@ function TrackOrder({ o, onBack, onReorder, review, onRate }) {
           <Text style={s.sub}>{items.length + ' Items'}</Text>
           <RNText style={s.sub}>{money(sub)}</RNText>
         </View>
+        {!o.pickup && !!(o.delivery_area || o.delivery_slot) && (
+          <View style={{ marginTop: 6 }}>
+            {!!o.delivery_area && <View style={s.rowB}><Text style={s.sub}>Delivery area</Text><RNText style={{color:INK,fontWeight:'700',flex:1,textAlign:'right'}}>{o.delivery_area}</RNText></View>}
+            {!!o.delivery_slot && <View style={[s.rowB,{marginTop:4}]}><Text style={s.sub}>Order-time slot (IST)</Text><RNText style={{color:INK,fontWeight:'700'}}>{o.delivery_slot}</RNText></View>}
+          </View>
+        )}
         <View style={[s.rowB, { marginTop: 6 }]}>
           <Text style={s.sub}>Delivery Charge</Text>
           <RNText style={{ color: INK, fontWeight: '700' }}>
@@ -5408,46 +5424,58 @@ function SellerKhata({ shop, onBack }) {
 function SellerFees({ shop, onBack }) {
   const [list, setList] = useState([]);
   const [area, setArea] = useState('');
-  const [fee, setFee] = useState('');
+  const [morning, setMorning] = useState('');
+  const [afternoon, setAfternoon] = useState('');
+  const [evening, setEvening] = useState('');
   const [msg, setMsg] = useState('');
   const load = useCallback(() => {
     newRpc('shop_fees_get', { p_shop_id: shop.id }).then((r) => setList(unwrapList(r))).catch((e) => setMsg(errMsg(e)));
   }, [shop.id]);
   useEffect(() => { load(); }, [load]);
   const add = async () => {
-    const f = Number(fee);
-    if (!area.trim()) { setMsg('Enter the area name'); return; }
-    if (fee === '' || !(f >= 0)) { setMsg('Enter a valid fee'); return; }
+    const m = Number(morning), a = Number(afternoon), e = Number(evening);
+    if (!area.trim()) { setMsg('Enter the delivery area name'); return; }
+    if ([morning, afternoon, evening].some((v) => v === '') || [m,a,e].some((v) => !Number.isFinite(v) || v < 0 || v > 10000)) {
+      setMsg('Enter a valid charge for all three time slots'); return;
+    }
     try {
-      await newRpc('shop_fee_save', { p_shop_id: shop.id, p_area: area.trim(), p_fee: f });
-      setArea(''); setFee(''); setMsg('✅ Saved'); load();
-    } catch (e) { setMsg(errMsg(e)); }
+      await newRpc('shop_fee_save_slots', { p_shop_id: shop.id, p_area: area.trim(), p_morning_fee: m, p_afternoon_fee: a, p_evening_fee: e });
+      setArea(''); setMorning(''); setAfternoon(''); setEvening('');
+      setMsg('✅ Delivery charges saved successfully'); load();
+    } catch (err) { setMsg(errMsg(err)); }
   };
-  const del = (x) => Alert.alert(x.area, 'Remove this area?', [
+  const del = (x) => Alert.alert(x.area, 'Remove this delivery area?', [
     { text: trs('No'), style: 'cancel' },
     { text: trs('Yes'), style: 'destructive', onPress: async () => {
-      try { await newRpc('shop_fee_delete', { p_id: x.id }); load(); } catch (e) { setMsg(errMsg(e)); }
+      try { await newRpc('shop_fee_delete', { p_id: x.id }); load(); } catch (err) { setMsg(errMsg(err)); }
     } },
   ]);
   return (
     <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
-      <Head title="Area Delivery Charges" sub="Set a delivery fee for each area" color={GREEN} onBack={onBack} />
+      <Head title="Area & Time-Based Delivery Charges" sub="Set separate delivery charges for each service area" color={GREEN} onBack={onBack} />
       <Msg t={msg} ok={msg.startsWith('✅')} />
       <View style={s.card}>
-        <Text style={s.h}>➕ Add area fee</Text>
-        <Field label="Area name" value={area} onChangeText={setArea} autoCapitalize="words" placeholder="e.g. Rasulgarh" />
-        <Field label="Delivery fee (₹)" value={fee} onChangeText={setFee} keyboardType="decimal-pad" placeholder="e.g. 30" />
-        <Btn kind="g" t="Save" onPress={add} />
-        <Text style={[s.sub, { marginTop: 8 }]}>When a buyer's delivery area matches, this fee is added to the order automatically. Add as many areas as you want. Saving the same area again updates its fee.</Text>
+        <Text style={s.h}>➕ Add delivery area</Text>
+        <Field label="Area / locality name" value={area} onChangeText={setArea} autoCapitalize="words" placeholder="e.g. Balasore Town, Remuna or Soro" />
+        <Text style={[s.sub,{marginTop:8,marginBottom:8,fontWeight:'700'}]}>Set delivery charges by order placement time (IST)</Text>
+        <Field label="Morning · 6:00 AM–12:00 PM (₹)" value={morning} onChangeText={setMorning} keyboardType="decimal-pad" placeholder="e.g. 20" />
+        <Field label="Afternoon · 12:00 PM–6:00 PM (₹)" value={afternoon} onChangeText={setAfternoon} keyboardType="decimal-pad" placeholder="e.g. 30" />
+        <Field label="Evening · 6:00 PM–12:00 AM (₹)" value={evening} onChangeText={setEvening} keyboardType="decimal-pad" placeholder="e.g. 40" />
+        <Btn kind="g" t="Save delivery charges" onPress={add} />
+        <Text style={[s.sub, { marginTop: 8 }]}>NearKart automatically applies the relevant charge based on the buyer's delivery area and the exact time the order is placed. You can add multiple service areas. Saving an existing area updates its three charges.</Text>
       </View>
       <View style={s.card}>
-        <Text style={s.h}>Your areas ({list.length})</Text>
-        {list.length === 0 && <Text style={s.sub}>No area-specific fee added yet. The shop's standard delivery charge applies; if it is ₹0, delivery is free.</Text>}
+        <Text style={s.h}>Configured delivery areas ({list.length})</Text>
+        {list.length === 0 && <Text style={s.sub}>No area-specific charges configured yet. The shop's standard delivery charge will apply until you add an area.</Text>}
         {list.map((x) => (
-          <View key={x.id} style={[s.rowB, { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: LINE }]}>
-            <RNText style={[s.shopN, { flex: 1 }]}>{'📍 ' + x.area}</RNText>
-            <RNText style={[s.price, { marginRight: 12 }]}>{money(Number(x.fee))}</RNText>
-            <TouchableOpacity onPress={() => del(x)}><RNText style={{ color: RED, fontWeight: '700' }}>Remove</RNText></TouchableOpacity>
+          <View key={x.id} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: LINE }}>
+            <View style={s.rowB}>
+              <RNText style={[s.shopN,{flex:1}]}>📍 {x.area}</RNText>
+              <TouchableOpacity onPress={() => del(x)}><RNText style={{color:RED,fontWeight:'700'}}>Remove</RNText></TouchableOpacity>
+            </View>
+            <View style={[s.rowB,{marginTop:8}]}><Text style={s.sub}>Morning · 6 AM–12 PM</Text><RNText style={s.price}>{money(Number(x.morning_fee ?? x.fee ?? 0))}</RNText></View>
+            <View style={[s.rowB,{marginTop:4}]}><Text style={s.sub}>Afternoon · 12 PM–6 PM</Text><RNText style={s.price}>{money(Number(x.afternoon_fee ?? x.fee ?? 0))}</RNText></View>
+            <View style={[s.rowB,{marginTop:4}]}><Text style={s.sub}>Evening · 6 PM–12 AM</Text><RNText style={s.price}>{money(Number(x.evening_fee ?? x.fee ?? 0))}</RNText></View>
           </View>
         ))}
       </View>
