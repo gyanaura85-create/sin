@@ -5280,7 +5280,7 @@ function SellerFees({ shop, onBack }) {
 // NEARKART BRAND SPLASH — short premium marketplace reveal
 // ======================================================================
 function NearKartSplash() {
-  const letterValues = useRef("NEAR KART".split("").map(() => new Animated.Value(0))).current;
+  const letterValues = useRef("NearKart".split("").map(() => new Animated.Value(0))).current;
   const taglineOpacity = useRef(new Animated.Value(0)).current;
   const taglineY = useRef(new Animated.Value(7)).current;
 
@@ -5300,10 +5300,10 @@ function NearKartSplash() {
     <View style={{ flex: 1, backgroundColor: '#073DBB', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
       <StatusBar barStyle="light-content" backgroundColor="#073DBB" />
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-        {"NEAR KART".split("").map((letter, index) => (
+        {"NearKart".split("").map((letter, index) => (
           <Animated.Text key={index} style={{
             color: index < 4 ? '#FFFFFF' : '#FF9418',
-            fontSize: 34, fontWeight: '900', letterSpacing: 1.2,
+            fontSize: 36, fontWeight: '900', letterSpacing: 0.1,
             opacity: letterValues[index],
             transform: [{ translateY: letterValues[index].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
           }}>{letter === ' ' ? '\u00a0' : letter}</Animated.Text>
