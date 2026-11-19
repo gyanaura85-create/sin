@@ -4062,7 +4062,7 @@ offer_expires_at: discount > 0 ? offerUntil : null,
 }
 
 // ---------- Seller: products table ----------
-function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen, perr }) {
+function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen, perr, canManage, onRequireSubscription }) {
   const [q, setQ] = useState('');
   const [fl, setFl] = useState('all');
   const [showF, setShowF] = useState(false);
@@ -4809,6 +4809,114 @@ function TabBar({ tabs, cur, onPick }) {
   );
 }
 
+function SellerSubscription({ shop, setShop, onClose }) {
+  const [utr, setUtr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [history, setHistory] = useState([]);
+  const load = useCallback(() => {
+    newRpc('get_my_shop_subscription_payments', { p_shop_id: shop.id })
+      .then((r) => setHistory(unwrapList(r)))
+      .catch((e) => setMsg(errMsg(e)));
+  }, [shop.id]);
+  useEffect(() => { load(); }, [load]);
+  const payNow = async () => {
+    const clean = utr.trim().replace(/\\s+/g, '').toUpperCase();
+    if (!/^[A-Z0-9]{6,32}$/.test(clean)) { setMsg('Enter the UTR / transaction reference from your UPI payment.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      await newRpc('submit_shop_subscription_payment', { p_shop_id: shop.id, p_utr: clean });
+      setUtr('');
+      setMsg('Payment request submitted. Admin will verify the bank credit and approve it.');
+      load();
+    } catch (e) { setMsg(errMsg(e)); }
+    setBusy(false);
+  };
+  const openUpi = () => {
+    const url = 'upi://pay?pa=9090197580%40ybl&pn=NearKart&am=29&cu=INR&tn=NearKart%2030-day%20subscription';
+    Linking.openURL(url).catch(() => setMsg('UPI app could not be opened. Pay manually to the UPI ID shown below.'));
+  };
+  const refreshShop = async () => {
+    setBusy(true); setMsg('');
+    try {
+      let r = await shopRpc('mine');
+      if (Array.isArray(r)) r = r[0];
+      if (r && r.id) {
+        setShop(r);
+        if (r.subscription_status === 'active' && r.subscription_expires_at && new Date(r.subscription_expires_at).getTime() > Date.now()) {
+          setMsg('Subscription active. Your shop is now enabled.');
+          onClose();
+        } else {
+          setMsg('Still waiting for admin verification. Please check again later.');
+        }
+      }
+    } catch (e) { setMsg(errMsg(e)); }
+    setBusy(false);
+  };
+  return (
+    <View style={{ flex: 1, backgroundColor: BG }}>
+      <ScrollView keyboardShouldPersistTaps="handled">
+        <View style={[s.head, { backgroundColor: PURPLE }]}>
+          <View style={s.rowB}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.headT}>Shop Subscription</Text>
+              <Text style={{ color: '#e6eeff', marginTop: 4 }}>{shop.name || 'Your shop'}</Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={{ padding: 10 }}>
+              <RNText style={{ color: '#fff', fontSize: 25, fontWeight: '800' }}>✕</RNText>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={[s.card, { borderColor: PURPLE, borderWidth: 1.5 }]}>
+          <Text style={[s.h, { color: PURPLE }]}>₹29 / 30 days</Text>
+          <Text style={s.sub}>NearKart seller subscription</Text>
+          <RNText style={{ color: INK, lineHeight: 22, marginTop: 10 }}>
+            Your subscription helps keep your shop active on the NearKart marketplace. With an active subscription, your shop can be visible to buyers, you can add and publish products, and you can accept incoming orders.
+          </RNText>
+          <RNText style={{ color: INK, lineHeight: 22, marginTop: 8 }}>
+            After 30 days the subscription expires. Your shop and products will be hidden from buyers until you renew. You must have an active subscription to publish products or accept orders.
+          </RNText>
+        </View>
+        <View style={s.card}>
+          <Text style={s.h}>1. Pay ₹29 using UPI</Text>
+          <Text style={s.sub}>Tap below to open your UPI app, or pay manually to this UPI ID.</Text>
+          <RNText selectable style={{ color: INK, fontSize: 16, fontWeight: '800', marginVertical: 12 }}>
+            9090197580@ybl
+          </RNText>
+          <Btn t="Pay ₹29 with UPI" onPress={openUpi} />
+          <Text style={[s.sub, { marginTop: 10 }]}>Make sure the payment is successful before submitting the UTR.</Text>
+        </View>
+        <View style={s.card}>
+          <Text style={s.h}>2. Submit payment reference</Text>
+          <Field label="UPI UTR / Transaction Reference" value={utr} onChangeText={setUtr}
+            autoCapitalize="characters" placeholder="Enter UTR number" />
+          <Btn t={busy ? 'Please wait...' : 'Submit payment for verification'} onPress={payNow} disabled={busy} />
+          <Text style={[s.sub, { marginTop: 9 }]}>
+            UTR submission is not automatic approval. NearKart admin will check the actual bank credit. Your 30 days start only after admin approval.
+          </Text>
+          <Msg t={msg} />
+          <View style={{ marginTop: 10 }}>
+            <Btn kind="o" t={busy ? 'Please wait...' : 'Refresh approval status'} onPress={refreshShop} disabled={busy} />
+          </View>
+        </View>
+        {history.length > 0 && (
+          <View style={s.card}>
+            <Text style={s.h}>Payment request history</Text>
+            {history.map((p) => (
+              <View key={p.id} style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: LINE }}>
+                <RNText style={{ color: INK, fontWeight: '700' }}>₹{p.amount} · {p.status.toUpperCase()}</RNText>
+                <RNText style={s.sub}>UTR: {p.utr} · {p.submitted_at ? new Date(p.submitted_at).toLocaleString() : ''}</RNText>
+                {!!p.review_note && <RNText style={s.sub}>{p.review_note}</RNText>}
+              </View>
+            ))}
+          </View>
+        )}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    </View>
+  );
+}
+
 // ======================================================================
 // SELLER APP (Partner Hub)
 // ======================================================================
@@ -4819,17 +4927,23 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
   const [products, setProducts] = useState([]);
   const [perr, setPerr] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const isSubActive = shop.subscription_status === 'active' &&
+    !!shop.subscription_expires_at && new Date(shop.subscription_expires_at).getTime() > Date.now();
+  const [subscriptionOpen, setSubscriptionOpen] = useState(!isSubActive);
   const { os, load, err: oerr, alertMsg, clearAlert, hasMore, loadMore } = useOrders(shop.id);
-  // seller's own products (works even when the shop is closed)
   const reloadP = useCallback(() => {
     rpc('seller_get_products', { p_shop_id: shop.id })
       .then((r) => { setProducts(unwrapList(r)); setPerr(''); })
       .catch((e) => setPerr(errMsg(e)));
   }, [shop.id]);
   useEffect(() => { reloadP(); }, [reloadP]);
+  useEffect(() => { if (isSubActive) setSubscriptionOpen(false); }, [isSubActive]);
   const newCount = os.filter((o) => o.status === 'new').length;
   const pick = (k) => {
-    if (k === 'add') { setTab('products'); setAddOpen(true); return; }
+    if (k === 'add') {
+      if (!isSubActive) { setSubscriptionOpen(true); return; }
+      setTab('products'); setAddOpen(true); return;
+    }
     setSelId(null); if (k === 'more') setMorePage(null); setTab(k);
   };
   const goTab = (k) => { setSelId(null); setTab(k); };
@@ -4844,31 +4958,42 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
       hasMore={hasMore} loadMore={loadMore} />;
   } else if (tab === 'products') {
     body = <SellerProducts shop={shop} setShop={setShop} products={products} reloadP={reloadP}
-      addOpen={addOpen} setAddOpen={setAddOpen} perr={perr} />;
+      addOpen={addOpen} setAddOpen={setAddOpen} perr={perr} canManage={isSubActive}
+      onRequireSubscription={() => setSubscriptionOpen(true)} />;
   } else {
     body = <SellerMore shop={shop} setShop={setShop} lang={lang} onLang={onLang} onLogout={onLogout}
       os={os} products={products} reloadP={reloadP} page={morePage} setPage={setMorePage} openOrder={openOrder} />;
   }
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
-      {!!alertMsg && (
-        <TouchableOpacity style={s.alertBar} onPress={() => { clearAlert(); setSelId(null); setTab('orders'); }}>
-          <Text style={{ color: '#fff', fontWeight: '800' }}>{alertMsg}</Text>
-          <Text style={{ color: '#fff' }}>Tap to view</Text>
-        </TouchableOpacity>
+      {subscriptionOpen ? (
+        <SellerSubscription shop={shop} setShop={setShop} onClose={() => setSubscriptionOpen(false)} />
+      ) : (
+        <>
+          {!isSubActive && (
+            <TouchableOpacity onPress={() => setSubscriptionOpen(true)}
+              style={{ backgroundColor: '#fff3d6', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0d79b' }}>
+              <RNText style={{ color: '#8a5700', fontWeight: '800' }}>
+                {shop.subscription_status === 'active' ? 'Subscription expired' : 'Subscription required'} · ₹29 / 30 days · Tap to pay or check status
+              </RNText>
+            </TouchableOpacity>
+          )}
+          {!!alertMsg && (
+            <TouchableOpacity style={s.alertBar} onPress={() => { clearAlert(); setSelId(null); setTab('orders'); }}>
+              <Text style={{ color: '#fff', fontWeight: '800' }}>{alertMsg}</Text>
+              <Text style={{ color: '#fff' }}>Tap to view</Text>
+            </TouchableOpacity>
+          )}
+          <View style={{ flex: 1 }}>{body}</View>
+          <TabBar cur={tab} onPick={pick} tabs={[
+            ['dash', '📊', 'Dashboard'],
+            ['orders', '📋', 'Orders', newCount > 0 ? newCount : null],
+            ['add', '➕', 'Add'],
+            ['products', '📦', 'Products'],
+            ['more', '⋯', 'More'],
+          ]} />
+        </>
       )}
-      <View style={{ flex: 1 }}>{body}</View>
-      <TabBar
-        cur={tab}
-        onPick={pick}
-        tabs={[
-          ['dash', '📊', 'Dashboard'],
-          ['orders', '📋', 'Orders', newCount > 0 ? newCount : null],
-          ['add', '➕', 'Add'],
-          ['products', '📦', 'Products'],
-          ['more', '⋯', 'More'],
-        ]}
-      />
     </View>
   );
 }
