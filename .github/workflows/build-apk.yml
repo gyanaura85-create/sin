@@ -1,5 +1,5 @@
 
-name: Build NearKart APK
+name: Build NearKart Android Release
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Android Release APK
+    name: Build Android Release APK and AAB
     runs-on: ubuntu-latest
 
     steps:
@@ -42,16 +42,24 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Release APK
+      - name: Build Release APK and AAB
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease bundleRelease
 
       - name: Upload NearKart APK
         uses: actions/upload-artifact@v4
         with:
           name: NearKart-Release-APK
           path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload NearKart Play Store AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: NearKart-Play-Store-AAB
+          path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 14
