@@ -2101,7 +2101,7 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
           const discount = Number(p.discount_percent || 0);
           const original = Number(p.original_price || 0);
           const price = Number(p.price || 0);
-          const expiry = p.offer_expires_at ? new Date(p.offer_expires_at) : null;
+          const expiry = p.offer_expires_at ? new Date(String(p.offer_expires_at).slice(0, 10) + 'T23:59:59') : null;
           return inStock(p) && discount > 0 && original > price && (!expiry || expiry >= now);
         });
         const bestByProduct = {};
