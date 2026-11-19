@@ -4,134 +4,95 @@
  *
  * INSTALL (once):
  *   npx expo install @react-native-async-storage/async-storage expo-location expo-image-picker
- *   (expo-image-picker is only needed for "Upload QR image". Without it the seller can paste a QR photo link.)
+ *   npx expo install expo-crypto expo-linking expo-notifications expo-device
+ *   (expo-image-picker is needed for shop photo, product photo and QR upload)
+ *   (expo-crypto + expo-linking are needed for Forgot Password, expo-notifications + expo-device for push)
  *
- * FLOW
- *  - App opens with the NearKart SPLASH screen (default English, language from Profile -> Language)
- *  - Everybody sees the same Home (guest can browse shops, products, add to cart)
- *  - BUYER: Profile / Orders / Place order -> Login or Sign up (buyer account).
- *      Profile page = same design for guest and buyer.
- *      A logged-in buyer does NOT see the "Local Business" card.
- *  - SELLER: only a guest sees the gradient card "Establish Your Local Business Presence".
- *      Tap "Create a Shop Profile" -> seller Login / Sign up -> shop registration -> Partner Hub.
- *      Seller account opens ONLY the Partner Hub. Seller logout -> back to guest Home.
- *  - Buyer: Home, Categories, Cart, Orders (live tracking), Profile
- *  - Seller: Dashboard, Orders (details + status update), Add, Products (table), More (profile)
- *
- * SELLER REGISTRATION / LOGIN (fixed in this version)
- *  - Signup uses /auth/v1/signup with data { role: 'seller' } (only a hint for onboarding, never used as authorization).
- *  - If email confirmation is ON, the app says so clearly and does NOT pretend the user is logged in.
- *  - The seller row in "profiles" (id = auth user id, role = seller) is written AFTER a real session exists,
- *    when the shop is registered (or right after the first seller login if it is missing).
- *  - The role that decides Buyer app / Partner Hub is ALWAYS read from the database (profiles.role),
- *    never from user_metadata. A buyer is never changed into a seller and a seller is never changed into a buyer.
- *  - update_my_profile (which writes role 'buyer') is NEVER called for a seller account.
- *  - Shop creation: get_my_shop is checked first (no duplicate shop), then register_my_shop is called.
- *
- * OPTIONAL SQL (recommended, safe, not destructive) - run ONCE in the Supabase SQL editor:
- *   It adds ONE new function "ensure_seller_profile". Without it the app falls back to a REST upsert on
- *   "profiles" (works only if your profiles RLS policy lets a user write his own row).
- *
- * create or replace function public.ensure_seller_profile(
- *   p_name text, p_phone text, p_area text default null, p_address text default null)
- * returns json language plpgsql security definer set search_path = public as $$
- * declare v_uid uuid := auth.uid(); v_role text;
- * begin
- *   if v_uid is null then raise exception 'Not authenticated'; end if;
- *   select role into v_role from public.profiles where id = v_uid;
- *   if v_role = 'buyer' and exists (select 1 from public.orders where user_id = v_uid) then
- *     raise exception 'This is a buyer account and cannot become a seller';
- *   end if;
- *   insert into public.profiles (id, name, phone, area, address, role, updated_at)
- *   values (v_uid, coalesce(nullif(trim(p_name), ''), 'Seller'), nullif(trim(p_phone), ''),
- *           nullif(trim(p_area), ''), nullif(trim(p_address), ''), 'seller', now())
- *   on conflict (id) do update set
- *     name = coalesce(nullif(trim(p_name), ''), public.profiles.name),
- *     phone = coalesce(nullif(trim(p_phone), ''), public.profiles.phone),
- *     area = coalesce(nullif(trim(p_area), ''), public.profiles.area),
- *     address = coalesce(nullif(trim(p_address), ''), public.profiles.address),
- *     role = 'seller', updated_at = now();
- *   return json_build_object('id', v_uid, 'role', 'seller');
- * end; $$;
- * grant execute on function public.ensure_seller_profile(text, text, text, text) to authenticated;
- *
- * UPI PAYMENT FLOW
- *  - Seller: More -> Payment Account -> UPI ID + QR code (upload image or paste link)
- *  - Buyer : Checkout -> UPI -> sees the shop QR code + UPI ID -> pays -> enters the 12 digit UTR number
- *            (a UPI order cannot be placed without a valid UTR number)
- *  - Seller: Order details -> sees the UTR number -> "Payment verified" / "Not received"
- *
- * SHOPS TABLE: the app never reads or writes the "shops" table directly (no table grant needed).
- *   get_public_shops, get_my_shop, register_my_shop, update_my_shop
- *
- * DATABASE RULES USED BY THIS APP (no direct REST writes to orders / order_items / products)
- *   place_order, get_my_orders_paginated, get_shop_orders_paginated, set_order_status,
- *   seller_get_products, seller_save_product, seller_set_product_active,
- *   update_shop_product_stock (optimistic version), update_my_profile (buyers only)
- *   payment: get_shop_payment, update_my_payment, submit_order_utr, get_order_payment, verify_order_payment
- *
- * ORDER STATUS  (UI key -> database value)
- *   new -> new, accepted -> accepted, preparing -> preparing,
- *   on_the_way -> out_for_delivery, ready -> ready_for_pickup, delivered -> delivered, cancelled -> cancelled
+ * NEW IN THIS VERSION
+ *  - Seller can upload SHOP PROFILE PHOTO from gallery (More -> tap the photo, or Manage Your Shop)
+ *  - Seller can upload PRODUCT PHOTO from gallery (photo link field removed). Buyers see the photo.
+ *  - A seller can sell MANY categories in one shop. Categories are saved in shops.category as "Grocery,Fashion".
+ *    Buyer Categories / filters / shop cards show the shop under every category it sells.
+ *  - Every page under Profile / More is now a real, colourful page (no more "Coming soon").
+ *  - Buyer NOTIFICATIONS: order updates, shop offers, new products, "rate your order" feedback.
+ *  - Seller NOTIFICATIONS: new orders, low stock, vibration alert.
+ *  - Feedback / reviews: buyer rates a delivered order (1-5 stars + comment). Shop rating updates automatically.
+ *  - Customer Support page: email + phone.
+ *  - Khata (pay later): shop side Khata Management and buyer side My Khata pages.
+ *    The Khata database function names / parameter names are all kept in ONE place: the KHATA block below.
  *
  * ======================================================================
- * SUPABASE SQL FOR THE PAYMENT FEATURE  (run ONCE in the Supabase SQL editor, only if not done already)
- * Change the column names owner_id (shops) and user_id (orders) if your tables use other names.
+ * RUN THIS SQL ONCE in the Supabase SQL editor (new functions only, nothing is deleted).
+ * (The payment / seller-profile SQL from the previous version stays the same.)
  * ======================================================================
  *
- * alter table shops  add column if not exists upi_id text;
- * alter table shops  add column if not exists qr_url text;
- * alter table orders add column if not exists utr_number text;
- * alter table orders add column if not exists payment_status text;
- * create unique index if not exists orders_utr_unique on orders (utr_number) where utr_number is not null;
+ * alter table shops add column if not exists photo_url text;
  *
- * create or replace function get_shop_payment(p_shop_id uuid) returns json
- * language sql security definer set search_path = public as $$
- *   select json_build_object('upi_id', s.upi_id, 'qr_url', s.qr_url) from shops s where s.id = p_shop_id;
- * $$;
- *
- * create or replace function update_my_payment(p_shop_id uuid, p_upi_id text, p_qr_url text) returns json
+ * create or replace function update_my_shop_photo(p_shop_id uuid, p_photo_url text) returns json
  * language plpgsql security definer set search_path = public as $$
  * begin
- *   update shops set upi_id = nullif(trim(p_upi_id), ''), qr_url = nullif(trim(p_qr_url), '')
- *   where id = p_shop_id and owner_id = auth.uid();
+ *   update shops set photo_url = nullif(trim(p_photo_url), '') where id = p_shop_id and owner_id = auth.uid();
  *   if not found then raise exception 'You are not allowed to change this shop'; end if;
- *   return json_build_object('upi_id', p_upi_id, 'qr_url', p_qr_url);
+ *   return json_build_object('photo_url', p_photo_url);
  * end; $$;
  *
- * create or replace function submit_order_utr(p_order uuid, p_utr text) returns json
+ * create or replace function update_my_shop_categories(p_shop_id uuid, p_category text) returns json
  * language plpgsql security definer set search_path = public as $$
  * begin
- *   if p_utr is null or p_utr !~ '^[0-9]{12}$' then raise exception 'UTR must be 12 digits'; end if;
- *   update orders set utr_number = p_utr, payment_status = 'pending_verification'
- *   where id = p_order and user_id = auth.uid() and payment_method ilike '%upi%';
- *   if not found then raise exception 'Order not found'; end if;
- *   return json_build_object('utr_number', p_utr, 'payment_status', 'pending_verification');
+ *   if p_category is null or length(trim(p_category)) = 0 then raise exception 'Select at least one category'; end if;
+ *   update shops set category = trim(p_category) where id = p_shop_id and owner_id = auth.uid();
+ *   if not found then raise exception 'You are not allowed to change this shop'; end if;
+ *   return json_build_object('category', p_category);
  * end; $$;
  *
- * create or replace function get_order_payment(p_order uuid) returns json
+ * create table if not exists shop_reviews (
+ *   id uuid primary key default gen_random_uuid(),
+ *   shop_id uuid not null, order_id uuid not null unique, user_id uuid not null,
+ *   rating int not null check (rating between 1 and 5), comment text, customer_name text,
+ *   created_at timestamptz not null default now());
+ * alter table shop_reviews enable row level security;
+ *
+ * create or replace function submit_review(p_order uuid, p_rating int, p_comment text) returns json
+ * language plpgsql security definer set search_path = public as $$
+ * declare v_shop uuid; v_name text; v_status text;
+ * begin
+ *   if auth.uid() is null then raise exception 'Not authenticated'; end if;
+ *   if p_rating is null or p_rating < 1 or p_rating > 5 then raise exception 'Rating must be 1 to 5'; end if;
+ *   select shop_id, customer_name, status into v_shop, v_name, v_status from orders where id = p_order and user_id = auth.uid();
+ *   if v_shop is null then raise exception 'Order not found'; end if;
+ *   if v_status <> 'delivered' then raise exception 'You can review only delivered orders'; end if;
+ *   insert into shop_reviews (shop_id, order_id, user_id, rating, comment, customer_name)
+ *   values (v_shop, p_order, auth.uid(), p_rating, nullif(trim(p_comment), ''), v_name);
+ *   update shops s set
+ *     rating = (select round(avg(rating)::numeric, 1) from shop_reviews where shop_id = v_shop),
+ *     rating_count = (select count(*) from shop_reviews where shop_id = v_shop)
+ *   where s.id = v_shop;
+ *   return json_build_object('ok', true);
+ * end; $$;
+ *
+ * create or replace function get_shop_reviews(p_shop_id uuid) returns json
  * language sql security definer set search_path = public as $$
- *   select json_build_object('utr_number', o.utr_number, 'payment_status', o.payment_status)
- *   from orders o
- *   where o.id = p_order and (o.user_id = auth.uid()
- *     or exists (select 1 from shops s where s.id = o.shop_id and s.owner_id = auth.uid()));
+ *   select coalesce((select json_agg(r) from (
+ *     select order_id, rating, comment, customer_name, created_at from shop_reviews
+ *     where shop_id = p_shop_id order by created_at desc limit 50) r), '[]'::json);
  * $$;
  *
- * create or replace function verify_order_payment(p_order uuid, p_verified boolean) returns json
- * language plpgsql security definer set search_path = public as $$
- * begin
- *   update orders o set payment_status = case when p_verified then 'verified' else 'rejected' end
- *   where o.id = p_order and o.utr_number is not null
- *     and exists (select 1 from shops s where s.id = o.shop_id and s.owner_id = auth.uid());
- *   if not found then raise exception 'Order not found or no UTR submitted'; end if;
- *   return json_build_object('payment_status', case when p_verified then 'verified' else 'rejected' end);
- * end; $$;
+ * create or replace function get_my_reviews() returns json
+ * language sql security definer set search_path = public as $$
+ *   select coalesce((select json_agg(r) from (
+ *     select order_id, rating, comment from shop_reviews where user_id = auth.uid()) r), '[]'::json);
+ * $$;
  *
- * grant execute on function get_shop_payment(uuid) to anon, authenticated;
- * grant execute on function update_my_payment(uuid, text, text) to authenticated;
- * grant execute on function submit_order_utr(uuid, text) to authenticated;
- * grant execute on function get_order_payment(uuid) to authenticated;
- * grant execute on function verify_order_payment(uuid, boolean) to authenticated;
+ * grant execute on function update_my_shop_photo(uuid, text) to authenticated;
+ * grant execute on function update_my_shop_categories(uuid, text) to authenticated;
+ * grant execute on function submit_review(uuid, int, text) to authenticated;
+ * grant execute on function get_shop_reviews(uuid) to anon, authenticated;
+ * grant execute on function get_my_reviews() to authenticated;
+ *
+ * NOTE: if your shops.category column has a CHECK constraint with a single allowed value, remove it
+ * (the app now stores a comma separated list such as "Grocery,Fashion").
+ * NOTE: photos are stored as small compressed data: images inside the database text columns
+ * (shops.photo_url, products.image_url, shops.qr_url). For a big production launch move them to Supabase Storage.
  */
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
@@ -148,9 +109,34 @@ const KEY = 'sb_publishable_I_ypFDUGPQdtct0U5FMhAQ_02rIepBx';
 const SPLASH_MS = 2600; // splash screen time (milliseconds)
 const PAGE = 20;        // buyer orders page size
 const SPAGE = 20;       // seller orders page size
+const SUPPORT_EMAIL = 'ssupportnearkert@gmail.com';
+const SUPPORT_PHONE = '8144937920';
 
 const BLUE = '#0b4fc2', DARK = '#0a3a99', INK = '#0b1f4d', MUTE = '#5b6a86';
 const BG = '#f6f8fc', LINE = '#dbe3f3', GREEN = '#067a4e', RED = '#c81e4a', LIME = '#6fdc7d', ORANGE = '#d9730d';
+const PURPLE = '#6a3fc2', TEAL = '#0e8f8f', PINK = '#d6336c', AMBER = '#e08a00', GOLD = '#f5a300';
+
+// ----------------------------------------------------------------------
+// KHATA database functions: the function names are the ones that exist in Supabase.
+// The PARAMETER NAMES below follow the app's p_* naming. If your SQL uses a different parameter
+// name, change it here (this is the only place that has to be edited).
+//   khata_my_status(p_shop_id)                  -> { status, balance }              (already used by KhataApply)
+//   khata_apply(p_shop_id, p_name, p_phone)                                         (already used by KhataApply)
+//   khata_shop_accounts(p_shop_id)              -> list of { account_id, customer_name, customer_phone, status, balance, credit_limit }
+//   khata_decide(p_account_id, p_approve)       -> approve / reject a customer
+//   khata_set_credit_limit(p_account_id, p_limit)
+//   khata_record_payment(p_account_id, p_amount, p_note)
+//   khata_ledger(p_account_id)                  -> list of { kind: 'order' | 'payment', ref, amount, at, note }
+//   khata_my_accounts()                         -> list of { account_id, shop_id, shop_name, status, balance, credit_limit }
+// ----------------------------------------------------------------------
+const KHATA = {
+  shopAccounts: (shopId) => ['khata_shop_accounts', { p_shop_id: shopId }],
+  decide: (accId, ok) => ['khata_decide', { p_account: accId, p_approve: ok }],
+  setLimit: (accId, v) => ['khata_set_credit_limit', { p_account: accId, p_limit: v }],
+  record: (accId, v, note) => ['khata_record_payment', { p_account_id: accId, p_amount: v, p_note: note || null }],
+  ledger: (accId) => ['khata_ledger', { p_account_id: accId }],
+  myAccounts: () => ['khata_my_accounts', {}],
+};
 
 const CATS = [
   { k: 'Grocery', ic: '🧺', bg: '#fff0d6' },
@@ -158,15 +144,21 @@ const CATS = [
   { k: 'Electronics', ic: '💻', bg: '#d9f6ff' },
   { k: 'Home', ic: '🛋️', bg: '#e6e8ff' },
   { k: 'Beauty', ic: '💄', bg: '#fde4ea' },
-  { k: 'CHICKEN-FISH', ic: '🐟 🐔', bg: '#d9f8ec' },
+  { k: 'CHICKEN-FISH', ic: '🐟', bg: '#d9f8ec' },
   { k: 'Food', ic: '🍽️', bg: '#fff3c4' },
   { k: 'Sabzi-Phal', ic: '🥬', bg: '#e1f7e3' },
   { k: 'Dudh-Dairy', ic: '🥛', bg: '#e8f1ff' },
 ];
 const SHOP_CATS = CATS.map((c) => c.k);
-const PROD_CATS = ['Atta, Rice & Dal', 'Oil & Ghee', 'Masala', 'Snacks', 'Beverages', 'Dairy', 'Sabzi',
+// product categories: the main shop categories first, then detailed ones
+const PROD_CATS = [...SHOP_CATS, 'Atta, Rice & Dal', 'Oil & Ghee', 'Masala', 'Snacks', 'Beverages', 'Dairy', 'Sabzi',
   'Phal', 'Personal Care', 'Home Care', 'Mobile & Accessories', 'Other'];
 const UNITS = ['kg', 'litre', 'piece', 'pack'];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// a shop can sell many categories: they are stored as "Grocery,Fashion"
+const shopCats = (x) => String((x && x.category) || '').split(',').map((c) => c.trim()).filter(Boolean);
+const catLabel = (x) => shopCats(x).join(', ');
 
 // ---------- order status: UI keys <-> database values ----------
 const DB2UI = { out_for_delivery: 'on_the_way', ready_for_pickup: 'ready' };
@@ -245,23 +237,155 @@ async function detectArea() {
   return { area, full, lat: pos.coords.latitude, lng: pos.coords.longitude };
 }
 
-// Pick a QR code image from the phone gallery -> returns a data: URI (or null when cancelled)
-async function pickQrImage() {
-  if (!Pick) throw new Error('Image upload is not available. Install expo-image-picker or paste a photo link.');
+
+// Pick an image from the phone gallery
+// Returns a data URI or null when cancelled
+async function pickImage(opt) {
+  const o = opt || {};
+
+  if (!Pick) {
+    throw new Error('Image upload is not available. Install expo-image-picker.');
+  }
+
   const perm = await Pick.requestMediaLibraryPermissionsAsync();
-  if (!perm || perm.granted === false) throw new Error('Photo permission was not given');
+
+  if (!perm || perm.granted === false) {
+    throw new Error('Photo permission was not given');
+  }
+
   const r = await Pick.launchImageLibraryAsync({
-    mediaTypes: Pick.MediaTypeOptions ? Pick.MediaTypeOptions.Images : ['images'],
+    mediaTypes: Pick.MediaTypeOptions
+      ? Pick.MediaTypeOptions.Images
+      : ['images'],
     allowsEditing: true,
-    quality: 0.5,
+    ...(o.aspect ? { aspect: o.aspect } : {}),
+    quality: o.quality || 0.5,
     base64: true,
   });
+
   if (!r || r.canceled || r.cancelled) return null;
+
   const a = r.assets && r.assets[0];
-  if (!a || !a.base64) throw new Error('Could not read the image. Please try another photo.');
-  if (a.base64.length > 900000) throw new Error('Image is too large. Please choose a smaller image or paste a link.');
+
+  if (!a || !a.base64) {
+    throw new Error('Could not read the image. Please try another photo.');
+  }
+
+  if (a.base64.length > (o.maxLen || 900000)) {
+    throw new Error('Image is too large. Please choose a smaller image.');
+  }
+
   return 'data:' + (a.mimeType || 'image/jpeg') + ';base64,' + a.base64;
 }
+
+
+// Take a photo using the camera
+async function takeImage(opt) {
+  const o = opt || {};
+
+  if (!Pick) {
+    throw new Error('Image upload is not available. Install expo-image-picker.');
+  }
+
+  const perm = await Pick.requestCameraPermissionsAsync();
+
+  if (!perm || perm.granted === false) {
+    throw new Error('Camera permission was not given');
+  }
+
+  const r = await Pick.launchCameraAsync({
+    mediaTypes: Pick.MediaTypeOptions
+      ? Pick.MediaTypeOptions.Images
+      : ['images'],
+    allowsEditing: true,
+    ...(o.aspect ? { aspect: o.aspect } : {}),
+    quality: o.quality || 0.5,
+    base64: true,
+  });
+
+  if (!r || r.canceled || r.cancelled) return null;
+
+  const a = r.assets && r.assets[0];
+
+  if (!a || !a.base64) {
+    throw new Error('Could not read the photo. Please try again.');
+  }
+
+  if (a.base64.length > (o.maxLen || 900000)) {
+    throw new Error('Image is too large. Please choose a smaller photo.');
+  }
+
+  return 'data:' + (a.mimeType || 'image/jpeg') + ';base64,' + a.base64;
+}
+
+
+// Show Camera or Gallery options
+function choosePhoto(opt) {
+  return new Promise((resolve, reject) => {
+    Alert.alert(
+      'Choose Photo',
+      'Camera se photo lo ya Gallery se upload karo.',
+      [
+        {
+          text: 'Camera',
+          onPress: async () => {
+            try {
+              resolve(await takeImage(opt));
+            } catch (e) {
+              reject(e);
+            }
+          },
+        },
+        {
+          text: 'Gallery',
+          onPress: async () => {
+            try {
+              resolve(await pickImage(opt));
+            } catch (e) {
+              reject(e);
+            }
+          },
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => resolve(null),
+        },
+      ],
+      {
+        cancelable: true,
+        onDismiss: () => resolve(null),
+      }
+    );
+  });
+}
+
+
+// QR Code: Gallery only
+const pickQrImage = () =>
+  pickImage({
+    quality: 0.5,
+    maxLen: 900000,
+  });
+
+
+// Shop Photo: Camera + Gallery
+const pickShopPhoto = () =>
+  choosePhoto({
+    aspect: [1, 1],
+    quality: 0.4,
+    maxLen: 450000,
+  });
+
+
+// Product Photo: Camera + Gallery
+const pickProductPhoto = () =>
+  choosePhoto({
+    aspect: [1, 1],
+    quality: 0.35,
+    maxLen: 300000,
+  });
+
 
 // ======================================================================
 // LANGUAGE (English / Hindi / Odia). Text missing here simply stays English.
@@ -435,7 +559,6 @@ const D = [
   ['Shop did not respond within 10 minutes',
     'दुकान ने 10 मिनट में जवाब नहीं दिया',
     'ଦୋକାନ 10 ମିନିଟ୍ ମଧ୍ୟରେ ଉତ୍ତର ଦେଲା ନାହିଁ'],
-  // order tracking / order details
   ['My Order', 'मेरा ऑर्डर', 'ମୋ ଅର୍ଡର'],
   ['Help', 'मदद', 'ସାହାଯ୍ୟ'],
   ['Estimated Delivery', 'अनुमानित डिलीवरी', 'ଅନୁମାନିତ ଡେଲିଭରି'],
@@ -485,7 +608,6 @@ const D = [
   ['Start Preparing', 'तैयारी शुरू करें', 'ପ୍ରସ୍ତୁତି ଆରମ୍ଭ'],
   ['Mark as Ready', 'तैयार चिह्नित करें', 'ପ୍ରସ୍ତୁତ ବୋଲି ଚିହ୍ନିତ'],
   ['Mark as Delivered', 'डिलीवर चिह्नित करें', 'ଡେଲିଭର୍ ବୋଲି ଚିହ୍ନିତ'],
-  // new in this version
   ['Pickup', 'पिकअप', 'ପିକଅପ୍'],
   ['Pickup from shop', 'दुकान से पिकअप', 'ଦୋକାନରୁ ପିକଅପ୍'],
   ['Delivery type', 'डिलीवरी का तरीका', 'ଡେଲିଭରି ପ୍ରକାର'],
@@ -505,14 +627,12 @@ const D = [
   ['UPI payment is confirmed only after the shop verifies it.',
     'UPI भुगतान तभी पक्का होगा जब दुकान उसे जाँच ले।',
     'UPI ପେମେଣ୍ଟ ଦୋକାନ ଯାଞ୍ଚ କଲା ପରେ ହିଁ ନିଶ୍ଚିତ ହେବ।'],
-  // payment
   ['Payment Account', 'पेमेंट अकाउंट', 'ପେମେଣ୍ଟ ଆକାଉଣ୍ଟ'],
   ['UPI ID', 'UPI आईडी', 'UPI ଆଇଡି'],
   ['UTR Number', 'UTR नंबर', 'UTR ନମ୍ବର'],
   ['Payment verified', 'भुगतान सत्यापित', 'ପେମେଣ୍ଟ ଯାଞ୍ଚ ହୋଇଛି'],
   ['Pay with UPI', 'UPI से भुगतान करें', 'UPI ରେ ପେମେଣ୍ଟ କରନ୍ତୁ'],
   ['Open UPI app', 'UPI ऐप खोलें', 'UPI ଆପ୍ ଖୋଲନ୍ତୁ'],
-  // seller
   ['Guest', 'अतिथि', 'ଅତିଥି'],
   ['Saved Addresses', 'सेव किए पते', 'ସେଭ୍ ଠିକଣା'],
   ['Customer Support', 'कस्टमर सपोर्ट', 'ଗ୍ରାହକ ସହାୟତା'],
@@ -527,7 +647,6 @@ const D = [
   ['Sell your products online and reach shoppers near you',
     'अपने प्रोडक्ट ऑनलाइन बेचें और पास के ग्राहकों तक पहुँचें',
     'ଆପଣଙ୍କ ପ୍ରଡକ୍ଟ ଅନଲାଇନ୍ ବିକ୍ରି କରନ୍ତୁ'],
-  // profile business card
   ['Establish Your Local Business Presence',
     'अपने लोकल बिज़नेस की पहचान बनाएँ',
     'ଆପଣଙ୍କ ସ୍ଥାନୀୟ ବ୍ୟବସାୟର ପରିଚୟ ତିଆରି କରନ୍ତୁ'],
@@ -535,20 +654,11 @@ const D = [
     'अपनी दुकान की अनोखी प्रोफ़ाइल बनाएँ और सीधे स्थानीय ग्राहकों से जुड़ें। प्रोडक्ट लिस्ट करने और ऑर्डर लेने की आसान प्रक्रिया।',
     'ଆପଣଙ୍କ ଦୋକାନର ନିଜସ୍ୱ ପ୍ରୋଫାଇଲ୍ ତିଆରି କରନ୍ତୁ ଏବଂ ସିଧାସଳଖ ସ୍ଥାନୀୟ ଗ୍ରାହକଙ୍କ ସହ ଯୋଡ଼ିହୁଅନ୍ତୁ। ପ୍ରଡକ୍ଟ ତାଲିକାଭୁକ୍ତ କରିବା ଓ ଅର୍ଡର ନେବା ପାଇଁ ସହଜ ପ୍ରକ୍ରିୟା।'],
   ['Create a Shop Profile', 'दुकान प्रोफ़ाइल बनाएँ', 'ଦୋକାନ ପ୍ରୋଫାଇଲ୍ ତିଆରି କରନ୍ତୁ'],
-  ['Manage Your Local Business',
-    'अपना लोकल बिज़नेस संभालें',
-    'ଆପଣଙ୍କ ସ୍ଥାନୀୟ ବ୍ୟବସାୟ ପରିଚାଳନା କରନ୍ତୁ'],
-  ['Your shop is live. Open the Partner Hub to manage products, orders and offers.',
-    'आपकी दुकान लाइव है। प्रोडक्ट, ऑर्डर और ऑफ़र संभालने के लिए पार्टनर हब खोलें।',
-    'ଆପଣଙ୍କ ଦୋକାନ ଲାଇଭ୍ ଅଛି। ପ୍ରଡକ୍ଟ, ଅର୍ଡର ଓ ଅଫର୍ ପରିଚାଳନା ପାଇଁ ପାର୍ଟନର୍ ହବ୍ ଖୋଲନ୍ତୁ।'],
   ['Register your shop', 'अपनी दुकान जोड़ें', 'ଆପଣଙ୍କ ଦୋକାନ ଯୋଡ଼ନ୍ତୁ'],
   ['Shop name', 'दुकान का नाम', 'ଦୋକାନର ନାମ'],
   ['Owner name', 'मालिक का नाम', 'ମାଲିକଙ୍କ ନାମ'],
   ['Phone number', 'फ़ोन नंबर', 'ଫୋନ୍ ନମ୍ବର'],
   ['Village / Area', 'गाँव / क्षेत्र', 'ଗାଁ / ଅଞ୍ଚଳ'],
-  ['Shop photo link (optional)',
-    'दुकान की फ़ोटो का लिंक (वैकल्पिक)',
-    'ଦୋକାନ ଫଟୋ ଲିଙ୍କ୍ (ଇଚ୍ଛାଧୀନ)'],
   ['Category', 'श्रेणी', 'ବର୍ଗ'],
   ['Open my shop', 'मेरी दुकान खोलें', 'ମୋ ଦୋକାନ ଖୋଲନ୍ତୁ'],
   ['Enter shop name, owner, 10-digit phone and area',
@@ -587,7 +697,6 @@ const D = [
   ['Shop stock ({0}, counter only)',
     'दुकान का स्टॉक ({0}, सिर्फ़ काउंटर)',
     'ଦୋକାନ ଷ୍ଟକ୍ ({0}, କେବଳ କାଉଣ୍ଟର)'],
-  ['Photo link (optional)', 'फ़ोटो का लिंक (वैकल्पिक)', 'ଫଟୋ ଲିଙ୍କ୍ (ଇଚ୍ଛାଧୀନ)'],
   ['Add product', 'प्रोडक्ट जोड़ें', 'ପ୍ରଡକ୍ଟ ଯୋଡ଼ନ୍ତୁ'],
   ['No products yet.', 'अभी कोई प्रोडक्ट नहीं।', 'ଏପର୍ଯ୍ୟନ୍ତ କୌଣସି ପ୍ରଡକ୍ଟ ନାହିଁ।'],
   ['✅ Product added', '✅ प्रोडक्ट जुड़ गया', '✅ ପ୍ରଡକ୍ଟ ଯୋଡ଼ାଗଲା'],
@@ -608,40 +717,17 @@ const D = [
   ['Filter', 'फ़िल्टर', 'ଫିଲ୍ଟର୍'],
   ['Shop Management', 'दुकान प्रबंधन', 'ଦୋକାନ ପରିଚାଳନା'],
   ['Manage Your Shop', 'अपनी दुकान संभालें', 'ଆପଣଙ୍କ ଦୋକାନ ପରିଚାଳନା'],
-  ['Update shop details, address, and information',
-    'दुकान की जानकारी अपडेट करें',
-    'ଦୋକାନ ବିବରଣୀ ଅପଡେଟ୍ କରନ୍ତୁ'],
   ['Business Hours', 'व्यापार समय', 'ବ୍ୟବସାୟ ସମୟ'],
-  ['Set open hours and holidays',
-    'खुलने का समय और छुट्टियाँ तय करें',
-    'ଖୋଲା ସମୟ ଓ ଛୁଟି ଠିକ୍ କରନ୍ତୁ'],
   ['Delivery and Pickup', 'डिलीवरी और पिकअप', 'ଡେଲିଭରି ଓ ପିକଅପ୍'],
-  ['Manage delivery zones and pickup options',
-    'डिलीवरी ज़ोन और पिकअप विकल्प',
-    'ଡେଲିଭରି ଜୋନ୍ ଓ ପିକଅପ୍ ବିକଳ୍ପ'],
-  ['Payment and Bank Details', 'भुगतान और बैंक विवरण', 'ପେମେଣ୍ଟ ଓ ବ୍ୟାଙ୍କ ବିବରଣୀ'],
-  ['Manage bank account and payout information',
-    'बैंक खाता और पेआउट जानकारी',
-    'ବ୍ୟାଙ୍କ ଖାତା ଓ ପେଆଉଟ୍ ସୂଚନା'],
   ['Products & Sales', 'प्रोडक्ट और बिक्री', 'ପ୍ରଡକ୍ଟ ଓ ବିକ୍ରି'],
   ['Support & Account', 'सपोर्ट और अकाउंट', 'ସହାୟତା ଓ ଆକାଉଣ୍ଟ'],
-  ['Manage your product categories',
-    'अपनी प्रोडक्ट श्रेणियाँ देखें',
-    'ଆପଣଙ୍କ ପ୍ରଡକ୍ଟ ବର୍ଗ ଦେଖନ୍ତୁ'],
   ['Inventory', 'इन्वेंटरी', 'ଇନଭେଣ୍ଟୋରୀ'],
-  ['Track stock and manage inventory', 'स्टॉक ट्रैक करें', 'ଷ୍ଟକ୍ ଟ୍ରାକ୍ କରନ୍ତୁ'],
   ['Deals and Offers', 'डील्स और ऑफ़र', 'ଡିଲ୍ ଓ ଅଫର୍'],
-  ['Create and manage deals and discounts', 'डील और डिस्काउंट बनाएँ', 'ଡିଲ୍ ଓ ଛାଡ଼ ତିଆରି କରନ୍ତୁ'],
   ['Sales Report', 'बिक्री रिपोर्ट', 'ବିକ୍ରି ରିପୋର୍ଟ'],
-  ['View sales performance and reports', 'बिक्री प्रदर्शन देखें', 'ବିକ୍ରି ପ୍ରଦର୍ଶନ ଦେଖନ୍ତୁ'],
   ['Customers Reviews', 'ग्राहक रिव्यू', 'ଗ୍ରାହକ ରିଭ୍ୟୁ'],
-  ['View and respond to customer reviews', 'ग्राहक रिव्यू देखें', 'ଗ୍ରାହକ ରିଭ୍ୟୁ ଦେଖନ୍ତୁ'],
-  ['Change app language', 'ऐप की भाषा बदलें', 'ଆପ୍ ଭାଷା ବଦଳାନ୍ତୁ'],
-  ['Get help and support', 'मदद और सपोर्ट पाएँ', 'ସାହାଯ୍ୟ ପାଆନ୍ତୁ'],
   ['Notification', 'नोटिफ़िकेशन', 'ନୋଟିଫିକେସନ୍'],
-  ['Manage your notification preferences', 'नोटिफ़िकेशन सेटिंग', 'ନୋଟିଫିକେସନ୍ ସେଟିଂ'],
+  ['Notifications', 'नोटिफ़िकेशन', 'ନୋଟିଫିକେସନ୍'],
   ['New order alert (vibration)', 'नए ऑर्डर पर वाइब्रेशन', 'ନୂଆ ଅର୍ଡରରେ ଭାଇବ୍ରେସନ୍'],
-  ['Logout from your seller account', 'सेलर अकाउंट से लॉग आउट', 'ସେଲର୍ ଆକାଉଣ୍ଟରୁ ଲଗ୍ ଆଉଟ୍'],
   ['Coming soon', 'जल्द आ रहा है', 'ଶୀଘ୍ର ଆସୁଛି'],
   ['No reviews yet.', 'अभी कोई रिव्यू नहीं।', 'ଏପର୍ଯ୍ୟନ୍ତ କୌଣସି ରିଭ୍ୟୁ ନାହିଁ।'],
   ['Your neighbourhood, your marketplace.',
@@ -651,6 +737,17 @@ const D = [
   ['Please turn on GPS / Location services',
     'कृपया GPS / लोकेशन चालू करें',
     'ଦୟାକରି GPS / ଲୋକେସନ୍ ଚାଲୁ କରନ୍ତୁ'],
+  // new in this version
+  ['Rate your order', 'अपने ऑर्डर को रेट करें', 'ଆପଣଙ୍କ ଅର୍ଡରକୁ ରେଟ୍ କରନ୍ତୁ'],
+  ['Submit feedback', 'फ़ीडबैक भेजें', 'ଫିଡବ୍ୟାକ୍ ପଠାନ୍ତୁ'],
+  ['Customer Reviews', 'ग्राहक रिव्यू', 'ଗ୍ରାହକ ରିଭ୍ୟୁ'],
+  ['Contact us', 'हमसे संपर्क करें', 'ଆମ ସହ ଯୋଗାଯୋଗ କରନ୍ତୁ'],
+  ['Email us', 'हमें ईमेल करें', 'ଆମକୁ ଇମେଲ୍ କରନ୍ତୁ'],
+  ['Call us', 'हमें कॉल करें', 'ଆମକୁ କଲ୍ କରନ୍ତୁ'],
+  ['Shop offers', 'दुकान के ऑफ़र', 'ଦୋକାନ ଅଫର୍'],
+  ['New products', 'नए प्रोडक्ट', 'ନୂଆ ପ୍ରଡକ୍ଟ'],
+  ['Order updates', 'ऑर्डर अपडेट', 'ଅର୍ଡର ଅପଡେଟ୍'],
+  ['Sales Report', 'बिक्री रिपोर्ट', 'ବିକ୍ରି ରିପୋର୍ଟ'],
 ];
 const TR = { en: { 'Sabzi-Phal': 'Vegetables & Fruits', 'Dudh-Dairy': 'Dairy & Milk',
   Sabzi: 'Vegetables', Phal: 'Fruits' }, hi: {}, or: {} };
@@ -840,12 +937,27 @@ async function registerPushToken() {
   if (!Notif || !Dev || !Dev.isDevice || !SESSION || !SESSION.uid) return;
 
   if (Platform.OS === 'android') {
-    await Notif.setNotificationChannelAsync('default', {
-      name: 'NearKart Notifications',
-      importance: Notif.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-    });
-  }
+  await Notif.setNotificationChannelAsync('default', {
+    name: 'NearKart Notifications',
+    importance: Notif.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    sound:'nearkart_notification.wav',
+  });
+
+  await Notif.setNotificationChannelAsync('orders', {
+    name: 'NearKart Order Alerts',
+    importance: Notif.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 150, 250],
+    sound:'nearkart_notification.wav',
+  });
+
+  await Notif.setNotificationChannelAsync('offers', {
+    name: 'NearKart Offers',
+    importance: Notif.AndroidImportance.DEFAULT,
+    vibrationPattern: [0, 150, 100, 150],
+    sound:'nearkart_notification.wav',
+  });
+}
 
   let permission = await Notif.getPermissionsAsync();
 
@@ -871,7 +983,6 @@ const isMissingFn = (e) => !!e && (e.status === 404 || e.code === 'PGRST202' ||
   /could not find the function|schema cache/i.test(String(e.message || '')));
 
 // ---------- SHOPS: only through RPC functions (never REST on the shops table) ----------
-// If your database already has differently named functions, change the names here.
 const SHOP_RPC = {
   list: 'get_public_shops',     // ()                                   -> all public shops (json array)
   mine: 'get_my_shop',          // ()                                   -> the signed-in owner's shop (json)
@@ -890,6 +1001,21 @@ async function shopRpc(kind, body) {
     throw e;
   }
 }
+// new RPCs of this version: friendly message when the SQL at the top of App.js was not run yet
+async function newRpc(name, body) {
+  try {
+    return await rpc(name, body);
+  } catch (e) {
+    if (isMissingFn(e)) {
+      const m = new Error('Database function "' + name + '" is missing. Run the new SQL given at the top of App.js in the Supabase SQL editor.');
+      m.missingRpc = true;
+      throw m;
+    }
+    throw e;
+  }
+}
+// Khata RPC helper: takes one of the [name, params] pairs from the KHATA block
+const kRpc = (pair) => newRpc(pair[0], pair[1]);
 // products no longer embed shops(name); the shop name is joined here from the shop list
 function withShopNames(ps, shopList) {
   const m = {};
@@ -940,7 +1066,7 @@ async function ensureSellerProfile(uid, d) {
   } catch (e) {
     if (e.network) throw e;
     if (e.code === '42501' || e.status === 401 || e.status === 403 || /row-level security|permission denied/i.test(String(e.message || ''))) {
-      throw new Error('Seller profile could not be saved (database permission). Run the ensure_seller_profile SQL given at the top of App.js, then try again.');
+      throw new Error('Seller profile could not be saved (database permission). Run the ensure_seller_profile SQL, then try again.');
     }
     throw e;
   }
@@ -957,7 +1083,7 @@ function errMsg(e) {
   if (/rate limit|too many requests|security purposes/i.test(m)) return 'Too many attempts. Please wait a minute and try again.';
   if (/password should be|weak password/i.test(m)) return m;
   if (/jwt|not authenticated|not logged in/i.test(m)) return 'Session expired. Please log in again.';
-  if (/could not find the function .*(get_shop_payment|update_my_payment|submit_order_utr|get_order_payment|verify_order_payment)/i.test(m)) return 'Payment database functions are missing. Run the payment SQL given at the top of App.js in the Supabase SQL editor.';
+  if (/could not find the function .*(get_shop_payment|update_my_payment|submit_order_utr|get_order_payment|verify_order_payment)/i.test(m)) return 'Payment database functions are missing. Run the payment SQL in the Supabase SQL editor.';
   if (/insufficient|not enough stock|out of stock|stock/i.test(m) && !/version/i.test(m)) return m;
   if (e.code === '42501' || /permission denied|row-level security|not allowed|not authorized/i.test(m)) return 'You are not allowed to do this. (' + m + ')';
   return m;
@@ -1014,6 +1140,9 @@ function estWindow(t) {
 }
 const callPhone = (p) => { if (p) Linking.openURL('tel:' + p).catch(() => {}); };
 const openMap = (a) => { if (a) Linking.openURL('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(a)).catch(() => {}); };
+const openMail = (a) => { if (a) Linking.openURL('mailto:' + a + '?subject=' + encodeURIComponent('NearKart Support')).catch(() => {
+  Alert.alert('Email', 'Please write to ' + a);
+}); };
 
 // ---------- UPI helpers ----------
 const UPI_RE = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
@@ -1055,12 +1184,12 @@ function normOrder(o) {
     address: o.customer_address || o.address || '',
     total: Number(o.total_amount ?? o.total ?? 0),
     pickup: /pick/i.test(String(o.delivery_type || '')),
-    pay: /upi/i.test(String(o.payment_method || '')) ? 'upi' : 'cod',
+    pay: /upi/i.test(String(o.payment_method || '')) ? 'upi' : /khata/i.test(String(o.payment_method || '')) ? 'khata' : 'cod',
   };
 }
 const payText = (o) => (o.pay === 'upi'
   ? 'UPI · ' + (o.payment_status ? String(o.payment_status).replace(/_/g, ' ') : 'pending shop verification')
-  : 'Cash on Delivery');
+  : o.pay === 'khata' ? 'Khata (Udhaar) · added to due' : 'Cash on Delivery');
 
 // UTR number + payment status of one UPI order (loaded with get_order_payment, falls back to the order row)
 function useOrderPay(o) {
@@ -1083,6 +1212,35 @@ function useOrderPay(o) {
   const status = (info && info.payment_status) || (o && o.payment_status) || '';
   return [{ utr: String(utr || ''), status: String(status || '') }, () => setTick((t) => t + 1)];
 }
+
+// ---------- REVIEWS / FEEDBACK ----------
+// all reviews of one shop (public)
+function useShopReviews(shopId, tick) {
+  const [st, setSt] = useState({ list: [], loading: true, err: '' });
+  useEffect(() => {
+    if (!shopId) return undefined;
+    let dead = false;
+    setSt((p) => ({ ...p, loading: true }));
+    rpc('get_shop_reviews', { p_shop_id: shopId })
+      .then((r) => { if (!dead) setSt({ list: unwrapList(r), loading: false, err: '' }); })
+      .catch((e) => { if (!dead) setSt({ list: [], loading: false, err: isMissingFn(e) ? '' : errMsg(e) }); });
+    return () => { dead = true; };
+  }, [shopId, tick]);
+  return st;
+}
+// reviews written by the logged-in buyer: { [order_id]: {rating, comment} }
+function useMyReviews(session) {
+  const [m, setM] = useState({});
+  const load = useCallback(() => {
+    if (!session) { setM({}); return; }
+    rpc('get_my_reviews')
+      .then((r) => { const o = {}; unwrapList(r).forEach((x) => { o[x.order_id] = x; }); setM(o); })
+      .catch(() => {});
+  }, [session]);
+  useEffect(() => { load(); }, [load]);
+  return [m, load, (id, rv) => setM((p) => ({ ...p, [id]: rv }))];
+}
+const avgRating = (list) => (list.length ? Math.round((list.reduce((t, r) => t + Number(r.rating || 0), 0) / list.length) * 10) / 10 : 0);
 
 // ======================================================================
 // SEARCH: English / Hindi / Odia names and common transliterations
@@ -1148,7 +1306,9 @@ function dedupeById(list) {
   return list.filter((p) => { if (!p || seen[p.id]) return false; seen[p.id] = 1; return true; });
 }
 const inStock = (p) => Number(p.online_qty) > 0;
-
+// a shop offer is live until its end date (no end date = always live)
+const isOfferLive = (x) => !!(x && x.offer) &&
+  (!x.offer_end_date || new Date(String(x.offer_end_date).slice(0, 10) + 'T23:59:59') >= new Date());
 // ======================================================================
 // SMALL UI PARTS
 // ======================================================================
@@ -1160,10 +1320,12 @@ function Btn({ t, onPress, kind, disabled, small, style }) {
       activeOpacity={0.8}
       style={[s.btn, small && s.btnS, kind === 'o' && s.btnO,
         kind === 'g' && { backgroundColor: GREEN }, kind === 'r' && s.btnR,
+        kind === 'w' && { backgroundColor: '#fff' },
         kind === 'x' && { backgroundColor: '#cfd6e4' }, disabled && { opacity: 0.5 }, style]}
     >
       <Text
         style={[s.btnT, kind === 'o' && { color: BLUE }, kind === 'r' && { color: RED },
+          kind === 'w' && { color: BLUE },
           kind === 'x' && { color: MUTE }]}>{t}</Text>
     </TouchableOpacity>
   );
@@ -1176,16 +1338,28 @@ function Field({ label, ...p }) {
     </View>
   );
 }
-function Chip({ t, on, onPress }) {
+function Chip({ t, on, onPress, color, disabled }) {
+  const str = String(t == null ? '' : t);
+  const m = str.match(/^(\S+)\s+([\s\S]+)$/);
+  const hasEmoji = !!m && /[^\x00-\x7F]/.test(m[1]);
+  const emoji = hasEmoji ? m[1] : '';
+  const label = trs(hasEmoji ? m[2] : str);
+  const fg = on ? '#fff' : INK;
   return (
-    <TouchableOpacity onPress={onPress} style={[s.chip, on && s.chipOn]}>
-      <Text style={[s.chipT, on && { color: '#fff' }]}>{t}</Text>
+    <TouchableOpacity
+      disabled={disabled}
+      onPress={onPress}
+      style={[s.chip, on && s.chipOn, on && color && { backgroundColor: color, borderColor: color },
+        { flexDirection: 'row', alignItems: 'center' }, disabled && { opacity: 0.45 }]}
+    >
+      {!!emoji && <RNText style={{ fontSize: 15, marginRight: 6, color: fg }}>{emoji}</RNText>}
+      <RNText style={{ color: fg, fontWeight: '700', fontSize: 13 }}>{label}</RNText>
     </TouchableOpacity>
   );
 }
 function Tag({ t, kind, sm }) {
   const c = { g: ['#dcf5e1', '#0a6b3f'], y: ['#fff0c4', '#8a5a00'], r: ['#fbe0db', '#9a2314'],
-    b: ['#e3ecff', BLUE] }[kind || 'g'];
+    b: ['#e3ecff', BLUE], p: ['#ece4fb', PURPLE] }[kind || 'g'];
   return <Text style={[s.tag, sm && s.tagS, { backgroundColor: c[0], color: c[1] }]}>{t}</Text>;
 }
 function Msg({ t, ok }) {
@@ -1226,19 +1400,31 @@ function QrImage({ url, size = 200 }) {
       style={{ width: size, height: size, borderRadius: 14, backgroundColor: '#fff' }} />
   );
 }
-function Head({ title, sub, onBack, right }) {
+// star rating (tap to choose when onChange is given)
+function Stars({ v, onChange, size = 22 }) {
   return (
-    <View style={s.head}>
+    <View style={{ flexDirection: 'row' }}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <TouchableOpacity key={n} disabled={!onChange} onPress={() => onChange && onChange(n)} activeOpacity={0.7}>
+          <RNText style={{ fontSize: size, color: n <= Math.round(v) ? GOLD : '#cfd6e4', marginRight: 2 }}>★</RNText>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+function Head({ title, sub, onBack, right, color }) {
+  return (
+    <View style={[s.head, color && { backgroundColor: color }]}>
       <View style={s.rowB}>
         {onBack ? (
           <TouchableOpacity onPress={onBack}>
-            <Text style={{ color: '#cfdcf7', fontSize: 16 }}>← Back</Text>
+            <Text style={{ color: '#e6eeff', fontSize: 16 }}>← Back</Text>
           </TouchableOpacity>
         ) : <View />}
         {right}
       </View>
       <Text style={s.headT}>{title}</Text>
-      {!!sub && <Text style={{ color: '#cfdcf7', marginTop: 2 }}>{sub}</Text>}
+      {!!sub && <Text style={{ color: '#e6eeff', marginTop: 2 }}>{sub}</Text>}
     </View>
   );
 }
@@ -1263,18 +1449,43 @@ function MenuRow({ ic, bg, title, sub, onPress, danger, last }) {
     </TouchableOpacity>
   );
 }
-// square tile used by the new Profile / More pages
-function ProfTile({ ic, bg, title, sub, onPress, danger }) {
+// square tile used by the Profile / More pages
+function ProfTile({ ic, bg, title, sub, onPress, danger, badge }) {
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.85}
-      style={{ width: '48%', backgroundColor: '#fff', borderRadius: 18, padding: 14, marginBottom: 12,
-        borderWidth: 1, borderColor: danger ? '#f6c4d0' : LINE }}>
+      style={[s.tileCard, { borderColor: danger ? '#f6c4d0' : LINE }]}>
       <View style={[s.mic, { backgroundColor: bg, width: 46, height: 46, borderRadius: 14 }]}>
         <RNText style={{ fontSize: 22 }}>{ic}</RNText>
+        {!!badge && <View style={s.badge}><RNText style={s.badgeT}>{badge}</RNText></View>}
       </View>
       <Text style={[s.shopN, { marginTop: 10, fontSize: 15 }, danger && { color: RED }]} numberOfLines={1}>{title}</Text>
       <Text style={s.sub} numberOfLines={1}>{sub}</Text>
     </TouchableOpacity>
+  );
+}
+// big colourful stat tile
+function StatTile({ ic, v, label, bg, fg }) {
+  return (
+    <View style={{ width: '48.5%', backgroundColor: bg, borderRadius: 18, padding: 14, marginBottom: 10 }}>
+      <RNText style={{ fontSize: 24 }}>{ic}</RNText>
+      <RNText style={{ fontSize: 22, fontWeight: '800', color: fg || INK, marginTop: 6 }}>{v}</RNText>
+      <Text style={{ fontSize: 12, color: fg || MUTE, fontWeight: '600' }}>{label}</Text>
+    </View>
+  );
+}
+// photo upload box (shop photo / product photo)
+function PhotoPicker({ url, name, size = 90, round, onPick, onRemove, label, busy }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 12 }}>
+      <TouchableOpacity onPress={onPick} activeOpacity={0.85}>
+        <Photo url={url} name={name || '+'} size={size} round={round} />
+        <View style={s.camBadge}><RNText style={{ fontSize: 13 }}>📷</RNText></View>
+      </TouchableOpacity>
+      <View style={{ flex: 1 }}>
+        <Btn small kind="o" t={busy ? 'Please wait...' : url ? 'Change photo' : (label || 'Upload photo')} onPress={onPick} disabled={busy} />
+        {!!url && !!onRemove && <Btn small kind="r" t="Remove" onPress={onRemove} style={{ marginTop: 6 }} />}
+      </View>
+    </View>
   );
 }
 function Sheet({ onClose, children }) {
@@ -1332,8 +1543,8 @@ function LocSheet({ loc, onClose, onSave }) {
 }
 
 // Soft green -> blue gradient (no extra package needed)
-function GradientBox({ children, style }) {
-  const A = [168, 230, 176], B = [158, 206, 232];
+function GradientBox({ children, style, from, to }) {
+  const A = from || [168, 230, 176], B = to || [158, 206, 232];
   const N = 20;
   const strips = [];
   for (let i = 0; i < N; i++) {
@@ -1346,6 +1557,55 @@ function GradientBox({ children, style }) {
       <View style={[StyleSheet.absoluteFill, { flexDirection: 'row' }]}>{strips}</View>
       {children}
     </View>
+  );
+}
+
+// ======================================================================
+// SUPPORT PAGE (buyer + seller): e-mail and phone number of NearKart support
+// ======================================================================
+function SupportPage({ onBack, color }) {
+  return (
+    <ScrollView style={{ backgroundColor: BG }}>
+      <View style={[s.head, { backgroundColor: color || TEAL, paddingBottom: 60 }]}>
+        <TouchableOpacity onPress={onBack}><Text style={{ color: '#e6eeff', fontSize: 16 }}>← Back</Text></TouchableOpacity>
+        <Text style={s.headT}>Customer Support</Text>
+        <Text style={{ color: '#e6eeff', marginTop: 2 }}>We are happy to help you</Text>
+      </View>
+      <View style={[s.card, { marginTop: -40, alignItems: 'center', padding: 22 }]}>
+        <View style={[s.mic, { width: 70, height: 70, borderRadius: 35, backgroundColor: '#dcf5e9' }]}>
+          <RNText style={{ fontSize: 34 }}>🎧</RNText>
+        </View>
+        <Text style={[s.h, { marginTop: 12, marginBottom: 2 }]}>How can we help?</Text>
+        <Text style={[s.sub, { textAlign: 'center' }]}>Order problem, payment question or app feedback - contact the NearKart team.</Text>
+      </View>
+      <TouchableOpacity style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14, borderColor: '#bfe3cf' }]}
+        onPress={() => openMail(SUPPORT_EMAIL)} activeOpacity={0.85}>
+        <View style={[s.mic, { backgroundColor: '#e3ecff', width: 52, height: 52, borderRadius: 16 }]}>
+          <RNText style={{ fontSize: 26 }}>✉️</RNText>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.sub}>Email us</Text>
+          <RNText selectable style={{ color: INK, fontWeight: '800', fontSize: 15, marginTop: 2 }}>{SUPPORT_EMAIL}</RNText>
+        </View>
+        <RNText style={{ color: BLUE, fontSize: 22 }}>›</RNText>
+      </TouchableOpacity>
+      <TouchableOpacity style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 14, borderColor: '#bfe3cf' }]}
+        onPress={() => callPhone(SUPPORT_PHONE)} activeOpacity={0.85}>
+        <View style={[s.mic, { backgroundColor: '#dcf5e1', width: 52, height: 52, borderRadius: 16 }]}>
+          <RNText style={{ fontSize: 26 }}>📞</RNText>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.sub}>Call us</Text>
+          <RNText selectable style={{ color: INK, fontWeight: '800', fontSize: 17, marginTop: 2 }}>{'+91 ' + SUPPORT_PHONE}</RNText>
+        </View>
+        <RNText style={{ color: GREEN, fontSize: 22 }}>›</RNText>
+      </TouchableOpacity>
+      <View style={{ paddingHorizontal: 14, marginTop: 14, flexDirection: 'row', gap: 10 }}>
+        <Btn kind="g" t="Call now" style={{ flex: 1 }} onPress={() => callPhone(SUPPORT_PHONE)} />
+        <Btn t="Send email" style={{ flex: 1 }} onPress={() => openMail(SUPPORT_EMAIL)} />
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
   );
 }
 
@@ -1397,10 +1657,8 @@ function Splash() {
 
 // ======================================================================
 // AUTH (buyer login from Profile / Orders / Place order, seller login from business card)
-// FIX: never shows a false success. If email confirmation is ON, the user is told to confirm
-// the email first (no fake login). "Already registered" is detected even when Supabase hides it.
 // ======================================================================
-function AuthBox({ role, onSession, onForgot}) {
+function AuthBox({ role, onSession, onForgot }) {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
@@ -1418,12 +1676,10 @@ function AuthBox({ role, onSession, onForgot}) {
       const j = await raw(signup ? '/auth/v1/signup' : '/auth/v1/token?grant_type=password',
         { method: 'POST', body });
       if (j && j.access_token && j.user && j.user.id) {
-        // real session (login, or signup with email confirmation turned OFF)
         const meta = j.user.user_metadata || {};
         await onSession({ token: j.access_token, refresh: j.refresh_token, uid: j.user.id,
           email: j.user.email || email.trim(), expires_at: expAt(j), meta_role: meta.role, isNew: signup });
       } else if (signup && j && (j.user || j.id)) {
-        // signup worked but there is no session -> email confirmation is required
         const u = j.user || j;
         if (Array.isArray(u.identities) && u.identities.length === 0) {
           setGood(false); setMsg('This email is already registered. Please log in.'); setMode('login');
@@ -1444,14 +1700,9 @@ function AuthBox({ role, onSession, onForgot}) {
       <Text style={s.h}>{mode === 'login' ? 'Login' : 'Create a new account'}</Text>
       <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
       <Field label="Password (6+ characters)" value={pw} onChangeText={setPw} secureTextEntry />
-      <TouchableOpacity
-  onPress={onForgot}
-  style={{ alignSelf: 'flex-end', paddingVertical: 10 }}
->
-  <Text style={{ color: BLUE, fontWeight: '700' }}>
-    Forgot Password?
-  </Text>
-</TouchableOpacity>
+      <TouchableOpacity onPress={onForgot} style={{ alignSelf: 'flex-end', paddingVertical: 10 }}>
+        <Text style={{ color: BLUE, fontWeight: '700' }}>Forgot Password?</Text>
+      </TouchableOpacity>
       <Msg t={msg} ok={good} />
       <View style={{ height: 6 }} />
       <Btn t={busy ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create account'} onPress={submit} disabled={busy}
@@ -1477,11 +1728,9 @@ function ForgotBox({ onBack }) {
       setMsg('Please enter a valid email address.');
       return;
     }
-
     setBusy(true);
     setMsg('');
     setGood(false);
-
     try {
       await requestPasswordReset(email);
       setGood(true);
@@ -1500,29 +1749,12 @@ function ForgotBox({ onBack }) {
       <Text style={s.sub}>
         Enter your registered email address. We will send you a password reset link.
       </Text>
-
       <View style={{ height: 14 }} />
-
-      <Field
-        label="Registered Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-      />
-
+      <Field label="Registered Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
       <Msg t={msg} ok={good} />
-
       <View style={{ height: 8 }} />
-
-      <Btn
-        t={busy ? 'Sending...' : 'Send Reset Link'}
-        onPress={submit}
-        disabled={busy}
-        style={{ minHeight: 50 }}
-      />
-
+      <Btn t={busy ? 'Sending...' : 'Send Reset Link'} onPress={submit} disabled={busy} style={{ minHeight: 50 }} />
       <View style={{ height: 8 }} />
-
       <Btn kind="o" t="Back to Login" onPress={onBack} />
     </View>
   );
@@ -1537,41 +1769,21 @@ function ResetPassword({ recovery, onDone }) {
 
   const submit = async () => {
     if (busy) return;
-
-    if (pw.length < 6) {
-      setGood(false);
-      setMsg('Password must be at least 6 characters.');
-      return;
-    }
-
-    if (pw !== confirmPw) {
-      setGood(false);
-      setMsg('Passwords do not match.');
-      return;
-    }
-
+    if (pw.length < 6) { setGood(false); setMsg('Password must be at least 6 characters.'); return; }
+    if (pw !== confirmPw) { setGood(false); setMsg('Passwords do not match.'); return; }
     if (!recovery || !recovery.access_token) {
       setGood(false);
       setMsg('Your reset session is invalid. Please request a new reset link.');
       return;
     }
-
     setBusy(true);
     setMsg('');
     setGood(false);
-
     try {
-      await raw('/auth/v1/user', {
-        method: 'PUT',
-        body: { password: pw },
-      }, recovery.access_token);
-
+      await raw('/auth/v1/user', { method: 'PUT', body: { password: pw } }, recovery.access_token);
       setGood(true);
       setMsg('Your password has been updated successfully.');
-
-      setTimeout(() => {
-        if (onDone) onDone();
-      }, 1200);
+      setTimeout(() => { if (onDone) onDone(); }, 1200);
     } catch (e) {
       setGood(false);
       setMsg(authErrMsg(e));
@@ -1581,70 +1793,39 @@ function ResetPassword({ recovery, onDone }) {
   };
 
   return (
-    <ScrollView
-      keyboardShouldPersistTaps="handled"
-      style={{ backgroundColor: BG }}
-      contentContainerStyle={{ padding: 14, flexGrow: 1, justifyContent: 'center' }}
-    >
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}
+      contentContainerStyle={{ padding: 14, flexGrow: 1, justifyContent: 'center' }}>
       <View style={s.card}>
         <Text style={s.h}>Create New Password</Text>
-        <Text style={s.sub}>
-          Choose a new password for your NearKart account.
-        </Text>
-
+        <Text style={s.sub}>Choose a new password for your NearKart account.</Text>
         <View style={{ height: 14 }} />
-
-        <Field
-          label="New Password (6+ characters)"
-          value={pw}
-          onChangeText={setPw}
-          secureTextEntry
-        />
-
-        <Field
-          label="Confirm New Password"
-          value={confirmPw}
-          onChangeText={setConfirmPw}
-          secureTextEntry
-        />
-
+        <Field label="New Password (6+ characters)" value={pw} onChangeText={setPw} secureTextEntry />
+        <Field label="Confirm New Password" value={confirmPw} onChangeText={setConfirmPw} secureTextEntry />
         <Msg t={msg} ok={good} />
-
         <View style={{ height: 8 }} />
-
-        <Btn
-          t={busy ? 'Updating...' : 'Update Password'}
-          onPress={submit}
-          disabled={busy}
-          style={{ minHeight: 50 }}
-        />
+        <Btn t={busy ? 'Updating...' : 'Update Password'} onPress={submit} disabled={busy} style={{ minHeight: 50 }} />
       </View>
     </ScrollView>
   );
 }
 function AuthScreen({ role, onSession, onClose, initialForgot }) {
-
   const seller = role === 'seller';
   const [forgot, setForgot] = useState(!!initialForgot);
   return (
     <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
-      <View style={[s.head, { paddingBottom: 30 }]}>
+      <View style={[s.head, { paddingBottom: 30, backgroundColor: seller ? PURPLE : BLUE }]}>
         <TouchableOpacity onPress={onClose}>
-          <Text style={{ color: '#cfdcf7', fontSize: 16 }}>← Back</Text>
+          <Text style={{ color: '#e6eeff', fontSize: 16 }}>← Back</Text>
         </TouchableOpacity>
         <View style={{ marginTop: 18 }}><Logo size={30} /></View>
         <Text style={[s.headT, { marginTop: 14 }]}>{seller ? 'Become a NearKart Partner' : 'Welcome to NearKart'}</Text>
-        <Text style={{ color: '#cfdcf7', marginTop: 4 }}>{seller ? 'Sell your products online and reach shoppers near you' : 'Login or sign up to continue'}</Text>
+        <Text style={{ color: '#e6eeff', marginTop: 4 }}>{seller ? 'Sell your products online and reach shoppers near you' : 'Login or sign up to continue'}</Text>
       </View>
-    {forgot ? (
-  <ForgotBox onBack={() => setForgot(false)} />
-) : (
-  <AuthBox
-  role={role}
-  onSession={onSession}
-  onForgot={() => setForgot(true)}
-/>
-)}  
+      {forgot ? (
+        <ForgotBox onBack={() => setForgot(false)} />
+      ) : (
+        <AuthBox role={role} onSession={onSession} onForgot={() => setForgot(true)} />
+      )}
       <View style={{ padding: 14 }}><Btn kind="o" t="Continue browsing" onPress={onClose} /></View>
     </ScrollView>
   );
@@ -1659,25 +1840,26 @@ function ShopCard({ x, onPress }) {
       <Photo url={x.photo_url} name={x.name} size={78} />
       <View style={{ flex: 1 }}>
         <RNText style={s.shopN} numberOfLines={1}>{x.name}</RNText>
-        <Text style={s.sub} numberOfLines={1}>{x.category} · {x.area}</Text>
+        <Text style={s.sub} numberOfLines={1}>{catLabel(x)} · {x.area}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
           <Tag t={x.is_open ? '● Open' : '● Closed'} kind={x.is_open ? 'g' : 'r'} />
-          <Text style={s.sub}>{x.rating > 0 ? '★ ' + x.rating : 'New'}</Text>
+          <RNText style={s.sub}>{x.rating > 0 ? '★ ' + x.rating : trs('New')}</RNText>
         </View>
-        {!!x.offer && <RNText style={s.offer} numberOfLines={1}>🎁 {x.offer}</RNText>}
+      {isOfferLive(x) && <RNText style={s.offer} numberOfLines={1}>🎁 {x.offer}</RNText>}
       </View>
       <RNText style={{ color: '#9aa3b2', fontSize: 22 }}>›</RNText>
     </TouchableOpacity>
   );
 }
 function ShopMini({ x, onPress }) {
+  const first = shopCats(x)[0];
   return (
     <TouchableOpacity style={s.mini} onPress={() => onPress(x)} activeOpacity={0.85}>
       <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
         <Photo url={x.photo_url} name={x.name} size={52} />
         <View style={{ flex: 1 }}>
           <RNText style={s.miniN} numberOfLines={1}>{x.name}</RNText>
-          <Text style={s.sub} numberOfLines={1}>{catMeta(x.category).ic} {x.category}</Text>
+          <Text style={s.sub} numberOfLines={1}>{catMeta(first).ic} {catLabel(x)}</Text>
         </View>
       </View>
       <View style={[s.rowB, { marginTop: 8 }]}>
@@ -1691,7 +1873,7 @@ function ProductTile({ p, onProduct }) {
   const out = Number(p.online_qty) <= 0;
   return (
     <TouchableOpacity style={s.pcard} onPress={() => onProduct(p)} activeOpacity={0.85}>
-      <Photo url={p.image_url} name={p.name} size={96} />
+      <Photo url={p.image_url} name={p.name} size={110} />
       <RNText style={[s.shopN, { marginTop: 8, fontSize: 14 }]} numberOfLines={1}>{p.name}</RNText>
       <RNText style={s.sub} numberOfLines={1}>{p.shops ? p.shops.name : ''}</RNText>
       <View style={[s.rowB, { marginTop: 6 }]}>
@@ -1704,7 +1886,7 @@ function ProductTile({ p, onProduct }) {
 }
 
 function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, onReload, onMenu, onBell,
-  onProfile, onCats, onCat }) {
+  onProfile, onCats, onCat, bellCount }) {
   const [q, setQ] = useState('');
   const [bi, setBi] = useState(0);
   const [fOpen, setFOpen] = useState(false);
@@ -1744,8 +1926,8 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
 
   const filtering = !!ql || onlyOpen || !!fcat;
   const fShops = shops.filter((x) =>
-    (!ql || matchText(x.name + ' ' + x.category + ' ' + x.area, ql)) &&
-    (!onlyOpen || x.is_open) && (!fcat || x.category === fcat));
+    (!ql || matchText(x.name + ' ' + catLabel(x) + ' ' + x.area, ql)) &&
+    (!onlyOpen || x.is_open) && (!fcat || shopCats(x).includes(fcat)));
   const pText = (p) => (p.name || '') + ' ' + (p.category || '');
   const fProds = ql
     ? dedupeById([...products.filter((p) => matchText(pText(p), ql)), ...sp.filter((p) => matchText(pText(p), ql))])
@@ -1774,7 +1956,10 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
             <Logo />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-            <TouchableOpacity onPress={onBell}><RNText style={{ fontSize: 24 }}>🔔</RNText></TouchableOpacity>
+            <TouchableOpacity onPress={onBell}>
+              <RNText style={{ fontSize: 24 }}>🔔</RNText>
+              {!!bellCount && <View style={s.badge}><RNText style={s.badgeT}>{bellCount > 9 ? '9+' : bellCount}</RNText></View>}
+            </TouchableOpacity>
             <TouchableOpacity onPress={onProfile} style={s.avatarS}>
               <RNText style={{ fontSize: 20 }}>👤</RNText>
             </TouchableOpacity>
@@ -1897,16 +2082,30 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
 }
 
 // ======================================================================
-// BUYER: CATEGORIES
+// BUYER: CATEGORIES (a shop is listed under EVERY category it sells)
 // ======================================================================
 function Categories({ shops, onShop, initial, clearInitial }) {
   const [sel, setSel] = useState(initial || null);
   useEffect(() => { if (initial) { setSel(initial); clearInitial(); } }, [initial]);
   if (sel) {
-    const list = shops.filter((x) => x.category === sel);
+    const list = shops.filter((x) => shopCats(x).includes(sel));
+    const meta = catMeta(sel);
     return (
-      <ScrollView>
-        <Head title={sel} sub={list.length + ' shops'} onBack={() => setSel(null)} />
+      <ScrollView style={{ backgroundColor: BG }}>
+        <View style={[s.head, { backgroundColor: PURPLE, paddingBottom: 20 }]}>
+          <TouchableOpacity onPress={() => setSel(null)}>
+            <Text style={{ color: '#e6eeff', fontSize: 16 }}>← Back</Text>
+          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 }}>
+            <View style={[s.mic, { backgroundColor: meta.bg, width: 56, height: 56, borderRadius: 18 }]}>
+              <RNText style={{ fontSize: 28 }}>{meta.ic}</RNText>
+            </View>
+            <View>
+              <Text style={[s.headT, { marginTop: 0 }]}>{sel}</Text>
+              <Text style={{ color: '#e6eeff' }}>{list.length + ' shops'}</Text>
+            </View>
+          </View>
+        </View>
         <View style={{ padding: 14 }}>
           {list.length === 0 && <Text style={s.empty}>No shops have joined yet.</Text>}
           {list.map((x) => <ShopCard key={x.id} x={x} onPress={onShop} />)}
@@ -1915,21 +2114,21 @@ function Categories({ shops, onShop, initial, clearInitial }) {
     );
   }
   return (
-    <ScrollView>
-      <Head title="All Categories" />
+    <ScrollView style={{ backgroundColor: BG }}>
+      <Head title="All Categories" color={PURPLE} sub="Find shops by what they sell" />
       <View style={{ padding: 14 }}>
         {CATS.map((c) => {
-          const n = shops.filter((x) => x.category === c.k).length;
+          const n = shops.filter((x) => shopCats(x).includes(c.k)).length;
           return (
-            <TouchableOpacity key={c.k} style={s.shopCard} onPress={() => setSel(c.k)}>
-              <View style={[s.mic, { backgroundColor: c.bg, width: 60, height: 60, borderRadius: 18 }]}>
+            <TouchableOpacity key={c.k} style={[s.shopCard, { backgroundColor: c.bg, borderColor: 'transparent' }]} onPress={() => setSel(c.k)}>
+              <View style={[s.mic, { backgroundColor: '#fff', width: 60, height: 60, borderRadius: 18 }]}>
                 <RNText style={{ fontSize: 28 }}>{c.ic}</RNText>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={s.shopN}>{c.k}</Text>
-                <Text style={s.sub}>{n + ' shops'}</Text>
+                <Text style={[s.sub, { color: INK }]}>{n + ' shops'}</Text>
               </View>
-              <RNText style={{ color: '#9aa3b2', fontSize: 22 }}>›</RNText>
+              <RNText style={{ color: INK, fontSize: 22 }}>›</RNText>
             </TouchableOpacity>
           );
         })}
@@ -1937,7 +2136,6 @@ function Categories({ shops, onShop, initial, clearInitial }) {
     </ScrollView>
   );
 }
-
 // ======================================================================
 // BUYER: quantity sheet
 // ======================================================================
@@ -1966,11 +2164,12 @@ function QtySheet({ p, initial, onClose, onAdd }) {
     <Sheet onClose={onClose}>
       <View style={s.rowB}>
         <View style={{ flexDirection: 'row', gap: 12, flex: 1 }}>
-          <Photo url={p.image_url} name={p.name} />
+          <Photo url={p.image_url} name={p.name} size={72} />
           <View style={{ flex: 1 }}>
             <RNText style={{ fontSize: 18, fontWeight: '800', color: INK }}>{p.name}</RNText>
             <Text
               style={s.sub}>{money(p.price)} / {unitLabel(p.unit)} · Stock {qtyLabel(stock, p.unit)}</Text>
+            {!!p.description && <RNText style={[s.sub, { marginTop: 2 }]} numberOfLines={2}>{p.description}</RNText>}
           </View>
         </View>
         <TouchableOpacity onPress={onClose}><Text style={{ color: MUTE }}>Close</Text></TouchableOpacity>
@@ -2006,9 +2205,9 @@ function QtySheet({ p, initial, onClose, onAdd }) {
 }
 
 // ======================================================================
-// BUYER: SHOP PAGE
+// BUYER: SHOP PAGE (with product photos and customer reviews)
 // ======================================================================
-function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart }) {
+function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
   const [ps, setPs] = useState([]);
   const [ld, setLd] = useState(true);
   const [err, setErr] = useState('');
@@ -2017,6 +2216,7 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart }) {
   const [lo, setLo] = useState('');
   const [hi, setHi] = useState('');
   const [sheet, setSheet] = useState(null);
+  const rv = useShopReviews(shop.id, 0);
 
   useEffect(() => {
     api('/rest/v1/products?shop_id=eq.' + shop.id + '&active=eq.true&select=*&order=name')
@@ -2042,7 +2242,7 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart }) {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView keyboardShouldPersistTaps="handled">
+      <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
         <View style={[s.head, { paddingBottom: 18 }]}>
           <TouchableOpacity onPress={onBack}>
             <Text style={{ color: '#cfdcf7', fontSize: 16 }}>← Back</Text>
@@ -2053,7 +2253,7 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart }) {
               <RNText style={{ color: '#fff', fontSize: 21, fontWeight: '800' }}>{shop.name}</RNText>
               <RNText
                 style={{ color: '#fff', marginTop: 3 }}>★ {shop.rating > 0 ? shop.rating + ' (' + shop.rating_count + ')' : trs('New')}</RNText>
-              <Text style={{ color: '#cfdcf7', marginTop: 2 }}>{shop.category} · {shop.area}</Text>
+              <Text style={{ color: '#cfdcf7', marginTop: 2 }}>{catLabel(shop)} · {shop.area}</Text>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, alignItems: 'center' }}>
                 <Tag t={shop.is_open ? '● Open' : '● Closed'} kind={shop.is_open ? 'g' : 'r'} />
                 <TouchableOpacity onPress={() => callPhone(shop.phone)}>
@@ -2065,6 +2265,7 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart }) {
           {!!shop.offer && <RNText style={{ color: '#fff', marginTop: 10 }}>🎁 {shop.offer}</RNText>}
         </View>
         {!shop.is_open && <Msg t="The shop is closed right now." />}
+        <KhataApply shop={shop} profile={profile} />
 
         <View style={s.card}>
           <TextInput
@@ -2094,7 +2295,7 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart }) {
             const op = Number(p.original_price || 0);
             return (
               <View key={p.id} style={s.prow}>
-                <Photo url={p.image_url} name={p.name} />
+                <Photo url={p.image_url} name={p.name} size={68} />
                 <View style={{ flex: 1 }}>
                   <RNText style={s.shopN}>{p.name}</RNText>
                   <Text
@@ -2110,6 +2311,30 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart }) {
               </View>
             );
           })}
+        </View>
+
+        <View style={s.card}>
+          <View style={s.rowB}>
+            <Text style={s.h}>⭐ Customer Reviews</Text>
+            {rv.list.length > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Stars v={avgRating(rv.list)} size={16} />
+                <RNText style={{ color: INK, fontWeight: '800' }}>{avgRating(rv.list)}</RNText>
+              </View>
+            )}
+          </View>
+          {rv.loading && <ActivityIndicator color={BLUE} />}
+          {!rv.loading && rv.list.length === 0 && <Text style={s.sub}>No reviews yet.</Text>}
+          {rv.list.slice(0, 5).map((r, i) => (
+            <View key={i} style={{ paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: LINE }}>
+              <View style={s.rowB}>
+                <RNText style={s.shopN}>{r.customer_name || 'Customer'}</RNText>
+                <RNText style={s.sub}>{r.created_at ? when(r.created_at) : ''}</RNText>
+              </View>
+              <Stars v={Number(r.rating)} size={14} />
+              {!!r.comment && <RNText style={{ color: INK, marginTop: 4 }}>{r.comment}</RNText>}
+            </View>
+          ))}
         </View>
         <View style={{ height: 90 }} />
       </ScrollView>
@@ -2176,17 +2401,65 @@ function UpiPayBox({ shop, total, info, loading, err, utr, setUtr }) {
 // ======================================================================
 // BUYER: CART + CHECKOUT  (place_order RPC)
 // ======================================================================
+// Khata may be used at checkout ONLY for an approved, not blocked account with a numeric credit limit and due.
+// (pending / rejected / blocked / no application / unknown status / missing numbers -> not usable -> Khata is hidden)
+// This is a UI rule only: the database must enforce the same thing inside place_order.
+function khataUsable(a) {
+  if (!a || typeof a !== 'object') return false;
+  if (String(a.status || '').trim().toLowerCase() !== 'approved') return false;
+  if (a.blocked === true || a.is_blocked === true || a.suspended === true) return false;
+  if (a.credit_limit === null || a.credit_limit === undefined || a.credit_limit === '') return false;
+  const lim = Number(a.credit_limit), bal = Number(a.balance || 0);
+  return Number.isFinite(lim) && lim >= 0 && Number.isFinite(bal);
+}
 function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setProfile, syncProfile }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [dtype, setDtype] = useState('delivery'); // 'delivery' | 'pickup'
-  const [pay, setPay] = useState('cod');          // 'cod' | 'upi'
+  const [pay, setPay] = useState('cod');   
+  const [deliveryFees, setDeliveryFees] = useState([]);
+  const [feesLoading, setFeesLoading] = useState(false);
+  const [feesError, setFeesError] = useState('');
+  const [feesFor, setFeesFor] = useState(null);   // shop id the loaded fees belong to
+  const [feesTick, setFeesTick] = useState(0);    // bump to retry loading the fees
   const [utr, setUtr] = useState('');
   const [pinfo, setPinfo] = useState(null);
   const [ploading, setPloading] = useState(false);
   const [perr, setPerr] = useState('');
+  const [kacc, setKacc] = useState(null);          // this shop's usable (approved, not blocked) khata account of the buyer; null = Khata hidden
+  const [kLoading, setKLoading] = useState(false); // latest Khata credit is being fetched
   const lock = useRef(false);                      // blocks double taps / duplicate submissions
   const shopId = cart && cart.shop ? cart.shop.id : null;
+  // Load this shop's area-wise delivery fees (reloaded when the shop changes or on Retry)
+  useEffect(() => {
+    if (!shopId) { setDeliveryFees([]); setFeesFor(null); setFeesError(''); setFeesLoading(false); return undefined; }
+    let dead = false;
+    setFeesLoading(true); setFeesError(''); setDeliveryFees([]); setFeesFor(null);
+    newRpc('shop_fees_get', { p_shop_id: shopId })
+      .then((r) => {
+        if (dead) return;
+        const wrapped = r && typeof r === 'object' && ['orders', 'products', 'data', 'items', 'rows'].some((k) => Array.isArray(r[k]));
+        // null = no rows. Any other non-list answer is NOT "free delivery": it blocks checkout.
+        if (r !== null && r !== undefined && !Array.isArray(r) && !wrapped) {
+          setFeesError('Delivery charges could not be verified (unexpected response). Please retry.');
+          return;
+        }
+        setDeliveryFees(unwrapList(r).filter((x) => x && typeof x === 'object'));
+        setFeesFor(shopId);
+      })
+      .catch((e) => { if (!dead) setFeesError('Delivery charges could not be loaded: ' + errMsg(e)); })
+      .finally(() => { if (!dead) setFeesLoading(false); });
+    return () => { dead = true; };
+  }, [shopId, feesTick]);
+  // Khata is SHOP SPECIFIC: only an approved account of THIS shop is returned
+  const loadKhata = useCallback(async () => {
+    if (!session || !shopId) return null;
+    const r = await kRpc(KHATA.myAccounts());
+    const rows = unwrapList(r).filter((x) => x && String(x.shop_id) === String(shopId));
+    // any blocked row for this shop hides Khata completely
+    if (rows.some((x) => String(x.status || '').trim().toLowerCase() === 'blocked' || x.blocked === true || x.is_blocked === true)) return null;
+    return rows.find(khataUsable) || null;
+  }, [session, shopId]);
   // shop QR code + UPI ID (only when the buyer chooses UPI)
   useEffect(() => {
     if (pay !== 'upi' || !shopId) return undefined;
@@ -2201,16 +2474,67 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
       .finally(() => { if (!dead) setPloading(false); });
     return () => { dead = true; };
   }, [pay, shopId]);
+  useEffect(() => {
+    let dead = false;
+    setKacc(null); setKLoading(true);
+    loadKhata().then((a) => { if (!dead) setKacc(a); }).catch(() => { if (!dead) setKacc(null); }).finally(() => { if (!dead) setKLoading(false); });
+    return () => { dead = true; };
+  }, [loadKhata]);
+  // re-read the latest credit (called when the buyer taps Khata); on any failure Khata is hidden (fail closed)
+  const refreshKhata = () => {
+    setKLoading(true);
+    loadKhata().then((a) => setKacc(a)).catch(() => setKacc(null)).finally(() => setKLoading(false));
+  };
+  // if Khata is not (or no longer) available for this shop, never keep it selected
+  useEffect(() => { if (pay === 'khata' && !kacc) setPay('cod'); }, [pay, kacc]);
   const items = cart && cart.items ? Object.values(cart.items) : [];
   if (!items.length) {
     return (
-      <View style={{ flex: 1 }}>
-        <Head title="Cart" />
+      <View style={{ flex: 1, backgroundColor: BG }}>
+        <Head title="Cart" color={GREEN} />
+        <RNText style={{ fontSize: 60, textAlign: 'center', marginTop: 40 }}>🛒</RNText>
         <Text style={s.empty}>Your cart is empty.{'\n'}Open a shop and add products.</Text>
       </View>
     );
   }
   const total = items.reduce((t, i) => t + Math.round(i.p.price * i.qty * 100) / 100, 0);
+  const kLimit = Number((kacc && kacc.credit_limit) || 0);
+  const kUsed = Number((kacc && kacc.balance) || 0);
+  const kAvail = Math.max(0, kLimit - kUsed);
+  // ---- delivery fee: for DISPLAY and the checkout gate only. place_order recomputes the real fee + total on the server. ----
+  // total = product subtotal only | deliveryFee = applicable fee | orderTotal = total + deliveryFee (what the buyer pays)
+  const addrText = String(profile.address || '').trim();
+  const feesReady = feesFor === shopId && !feesLoading && !feesError;
+  const hasAreaFees = deliveryFees.length > 0;
+  const areaHit = dtype === 'delivery' && hasAreaFees && addrText ? matchFee(deliveryFees, addrText) : null;
+  const shopFeeKnown = !!(cart.shop && Object.prototype.hasOwnProperty.call(cart.shop, 'delivery_charge'));
+  let feeState = 'ok', deliveryFee = 0, feeNote = '', feeBad = '';
+  if (dtype === 'pickup') {
+    feeState = 'pickup';
+  } else if (feesError) {
+    feeState = 'error'; feeBad = feesError;
+  } else if (!feesReady) {
+    feeState = 'loading';
+  } else if (hasAreaFees) {
+    if (!addrText) feeState = 'address';
+    else if (!areaHit) feeState = 'unavailable';
+    else {
+      const af = Number(areaHit.fee);
+      if (areaHit.fee === null || areaHit.fee === undefined || areaHit.fee === '' || !Number.isFinite(af) || af < 0) {
+        feeState = 'error'; feeBad = 'The delivery fee saved for "' + areaHit.area + '" is not valid. Please contact the shop.';
+      } else { deliveryFee = af; feeNote = String(areaHit.area); }
+    }
+  } else if (shopFeeKnown) {
+    const sraw = cart.shop.delivery_charge;
+    const sf = sraw === null || sraw === undefined || sraw === '' ? 0 : Number(sraw);
+    if (!Number.isFinite(sf) || sf < 0) { feeState = 'error'; feeBad = 'This shop\'s delivery charge is not valid. Please contact the shop.'; }
+    else deliveryFee = sf;
+  }
+  const feeUnknown = feeState === 'ok' && !hasAreaFees && !shopFeeKnown; // shop list did not include delivery_charge: the server adds it
+  const orderTotal = Math.round((total + deliveryFee) * 100) / 100;
+  const canPlace = feeState === 'pickup' || feeState === 'ok';
+  const areaList = deliveryFees.map((x) => x.area).filter(Boolean).join(', ');
+  const kOk = kAvail > 0.005 && orderTotal <= kAvail + 0.005; // zero credit or less than the order total (incl. delivery) -> not OK
   const remove = (id) => {
     const n = { ...cart.items }; delete n[id];
     setCart(Object.keys(n).length ? { ...cart, items: n } : null);
@@ -2227,8 +2551,27 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
       if (!has) { setMsg('This shop has not added UPI details yet. Please choose Cash on Delivery.'); return; }
       if (!isUtr(utr)) { setMsg('Pay first, then enter the 12-digit UTR number to place the order.'); return; }
     }
+    if (!canPlace) {
+      setMsg(feeState === 'unavailable' ? 'Delivery is not available to this address. Choose Pickup or change the address.'
+        : feeState === 'error' ? (feeBad || 'Delivery charge could not be verified. Please retry.')
+        : feeState === 'address' ? 'Enter your full delivery address' : 'Checking the delivery charge. Please wait a moment.');
+      return;
+    }
     lock.current = true; setBusy(true); setMsg('');
+    let kBefore = 0;
     try {
+      // 0) Khata: re-check approval + shop specific limit with fresh numbers right before ordering
+      if (pay === 'khata') {
+        const acc = await loadKhata();
+        if (!acc) { setMsg('Khata is not available for this shop (not approved, blocked or invalid). Please choose another payment method.'); setPay('cod'); lock.current = false; setBusy(false); return; }
+        const lim = Number(acc.credit_limit || 0), used = Number(acc.balance || 0), av = Math.max(0, lim - used);
+        setKacc(acc);
+        if (orderTotal > av + 0.005) {
+          setMsg('Not enough Khata credit. Available ' + money(av) + ' (limit ' + money(lim) + ', due ' + money(used) + '), order total ' + money(orderTotal) + '. Pay your due, ask the shop to increase the limit, or choose another payment method.');
+          lock.current = false; setBusy(false); return;
+        }
+        kBefore = used;
+      }
       // 1) re-check stock right before ordering
       const ids = items.map((i) => i.p.id).join(',');
       const fresh = await api('/rest/v1/products?id=in.(' + ids + ')&select=id,name,online_qty,active,unit');
@@ -2240,15 +2583,26 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
       });
       if (bad.length) { setMsg('Not enough stock: ' + bad.join(', ') + '. Please update your cart.'); lock.current = false; setBusy(false); return; }
       // 2) place the order through the RPC
-      const res = await rpc('place_order', {
+      const orderArgs = {
         p_shop_id: cart.shop.id,
         p_items: items.map((i) => ({ product_id: i.p.id, qty: i.qty })),
         p_customer_name: name,
         p_customer_phone: phone,
         p_customer_address: dtype === 'pickup' && !address ? 'Pickup from shop' : address,
         p_delivery_type: dtype,
-        p_payment_method: pay,
-      });
+      };
+      let res;
+      if (pay === 'khata') {
+        // Khata goes ONLY through the secure function: it locks the account and checks status + credit on the server
+        try {
+          res = await rpc('place_order_khata', orderArgs);
+        } catch (ek) {
+          if (isMissingFn(ek)) throw new Error('Secure Khata ordering is not set up yet. Please choose another payment method.');
+          throw ek;
+        }
+      } else {
+        res = await rpc('place_order', { ...orderArgs, p_payment_method: pay });
+      }
       let r = res;
       if (Array.isArray(r)) r = r[0];
       if (r && typeof r === 'object' && (r.success === false || r.ok === false || r.error)) {
@@ -2257,6 +2611,13 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
       const id = r && typeof r === 'object' ? (r.order_id || r.id || (r.order && r.order.id)) : r;
       if (!id) throw new Error('Order response was not understood. Please check My Orders before trying again.');
       const number = r && typeof r === 'object' ? (r.order_number || (r.order && r.order.order_number)) : null;
+      // the SERVER is the authority: use its final amount / fee when the response carries them
+      const srvTotal = r && typeof r === 'object' ? Number(r.total_amount !== undefined && r.total_amount !== null ? r.total_amount : (r.order && r.order.total_amount)) : NaN;
+      const srvFee = r && typeof r === 'object' ? Number(r.delivery_fee !== undefined && r.delivery_fee !== null ? r.delivery_fee : (r.order && r.order.delivery_fee)) : NaN;
+      const paid = Number.isFinite(srvTotal) && srvTotal > 0 ? srvTotal : orderTotal;
+      const paidFee = Number.isFinite(srvFee) && srvFee >= 0 ? srvFee : deliveryFee;
+      const amtMsg = Math.abs(paid - orderTotal) > 0.01
+        ? 'The final amount confirmed by the system is ' + money(paid) + ' (you were shown ' + money(orderTotal) + '). Please tell the shop if you paid a different amount.' : '';
       // 3) UPI: save the UTR number with the order
       let utrMsg = '';
       if (pay === 'upi') {
@@ -2270,19 +2631,28 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
           }
         }
       }
+      let khataMsg = '';
+      if (pay === 'khata') {
+        try {
+          const a2 = await loadKhata();
+          if (a2 && Number(a2.balance || 0) + 0.01 < kBefore + paid) {
+            khataMsg = 'Order placed, but your Khata due did not update automatically. Please tell the shop before delivery.';
+          }
+        } catch (e3) { /* the order itself is placed; the due can be checked in My Khata */ }
+      }
       if (syncProfile) syncProfile();
-      onDone({ id: String(id), number, shop: cart.shop, items, total, pay, pickup: dtype === 'pickup',
-        utr: pay === 'upi' ? utr.trim() : '', utrMsg });
+      onDone({ id: String(id), number, shop: cart.shop, items, total: paid, subtotal: total, deliveryFee: dtype === 'pickup' ? 0 : paidFee,
+        pay, pickup: dtype === 'pickup', utr: pay === 'upi' ? utr.trim() : '', utrMsg, khataMsg, amtMsg });
     } catch (e) { setMsg(orderErrMsg(e)); lock.current = false; }
     setBusy(false);
   };
   return (
-    <ScrollView keyboardShouldPersistTaps="handled">
-      <Head title="Cart" sub={cart.shop.name} />
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+      <Head title="Cart" sub={cart.shop.name} color={GREEN} />
       <View style={s.card}>
         {items.map((i) => (
           <View key={i.p.id} style={s.prow}>
-            <Photo url={i.p.image_url} name={i.p.name} size={48} />
+            <Photo url={i.p.image_url} name={i.p.name} size={56} />
             <View style={{ flex: 1 }}>
               <RNText style={s.shopN}>{i.p.name}</RNText>
               <Text
@@ -2297,10 +2667,37 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
           </View>
         ))}
         <View style={[s.rowB, { marginTop: 10 }]}>
-          <Text style={s.h}>Total</Text>
-          <Text style={s.h}>{money(total)}</Text>
+          <Text style={s.sub}>Subtotal</Text>
+          <RNText style={{ color: INK, fontWeight: '700' }}>{money(total)}</RNText>
         </View>
-        <Text style={s.sub}>Delivery: agree with the shop (free for now)</Text>
+        <View style={[s.rowB, { marginTop: 4 }]}>
+          <RNText style={[s.sub, { flex: 1 }]}>{feeNote ? 'Delivery charge (' + feeNote + ')' : 'Delivery charge'}</RNText>
+          <RNText style={{ color: INK, fontWeight: '700' }}>
+            {feeState === 'pickup' ? money(0) + ' (Pickup)'
+              : feeState === 'loading' ? 'Checking...'
+              : feeState === 'address' ? 'Enter address'
+              : feeState === 'unavailable' || feeState === 'error' ? 'Not available'
+              : feeUnknown ? 'Set by shop' : money(deliveryFee)}
+          </RNText>
+        </View>
+        <View style={[s.rowB, { marginTop: 8 }]}>
+          <Text style={s.h}>Total payable</Text>
+          <Text style={s.h}>{money(orderTotal)}</Text>
+        </View>
+        {feeUnknown && <Text style={[s.sub, { marginTop: 6 }]}>Any delivery charge of this shop is added when the order is placed. The final amount is confirmed on the order.</Text>}
+        {feeState === 'loading' && <ActivityIndicator color={BLUE} style={{ marginTop: 8 }} />}
+        {feeState === 'address' && <Text style={[s.sub, { marginTop: 6 }]}>This shop charges delivery by area. Enter your full address below to see the delivery charge.</Text>}
+        {feeState === 'unavailable' && (
+          <View style={{ marginTop: 8 }}>
+            <Msg t={'Delivery is not available to your address.' + (areaList ? ' This shop delivers to: ' + areaList + '.' : '') + ' Change the address or choose Pickup.'} />
+          </View>
+        )}
+        {feeState === 'error' && (
+          <View style={{ marginTop: 8 }}>
+            <Msg t={feeBad || 'Delivery charge could not be verified.'} />
+            {!!feesError && <Btn small kind="o" t="Retry" onPress={() => setFeesTick((n) => n + 1)} />}
+          </View>
+        )}
       </View>
       <View style={s.card}>
         <Text style={s.h}>Delivery type</Text>
@@ -2317,20 +2714,35 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
         <Field label={dtype === 'delivery' ? 'Full address' : 'Full address (optional for pickup)'} value={profile.address} onChangeText={(v) => setProfile({ ...profile,
           address: v })} multiline autoCapitalize="sentences" />
         <Text style={s.label}>Payment</Text>
-        <View style={{ flexDirection: 'row' }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
           <Chip t="Cash on Delivery" on={pay === 'cod'} onPress={() => setPay('cod')} />
           <Chip t="UPI" on={pay === 'upi'} onPress={() => setPay('upi')} />
+          {!!kacc && <Chip t="Khata (Udhaar)" color={AMBER} on={pay === 'khata'} disabled={!kOk || kLoading}
+            onPress={() => { setPay('khata'); refreshKhata(); }} />}
         </View>
+        {!!kacc && !kOk && pay !== 'khata' && (
+          <RNText style={[s.sub, { marginTop: 6 }]}>{'Khata is unavailable for this order: available credit ' + money(kAvail) + ', order total ' + money(orderTotal) + '.'}</RNText>
+        )}
+        {pay === 'khata' && !!kacc && (
+          <View style={{ marginTop: 10, padding: 12, borderRadius: 12, backgroundColor: '#fff7e0', borderWidth: 1, borderColor: '#f2dc9b' }}>
+            <View style={s.rowB}><Text style={s.sub}>Credit limit</Text><RNText style={{ color: INK, fontWeight: '700' }}>{money(kLimit)}</RNText></View>
+            <View style={[s.rowB, { marginTop: 4 }]}><Text style={s.sub}>Used credit (due)</Text><RNText style={{ color: kUsed > 0 ? RED : GREEN, fontWeight: '700' }}>{money(kUsed)}</RNText></View>
+            <View style={[s.rowB, { marginTop: 4 }]}><Text style={s.sub}>Available credit</Text><RNText style={{ color: kOk ? GREEN : RED, fontWeight: '800' }}>{money(kAvail)}</RNText></View>
+            {kOk
+              ? <Text style={[s.sub, { marginTop: 8 }]}>{'This order (' + money(orderTotal) + ') will be added to your Khata due at ' + cart.shop.name + '.'}</Text>
+              : <Msg t={'Not enough Khata credit for this order (' + money(orderTotal) + '). Available: ' + money(kAvail) + '. Choose another payment method or ask the shop to increase your limit.'} />}
+          </View>
+        )}
         {pay === 'upi' && <Text
           style={[s.sub, { marginTop: 2 }]}>UPI payment is confirmed only after the shop verifies it.</Text>}
         {pay === 'upi' && (
-          <UpiPayBox shop={cart.shop} total={total} info={pinfo} loading={ploading} err={perr}
+          <UpiPayBox shop={cart.shop} total={orderTotal} info={pinfo} loading={ploading} err={perr}
             utr={utr} setUtr={setUtr} />
         )}
       </View>
       <View style={{ padding: 14 }}>
         <Msg t={msg} />
-        <Btn t={busy ? 'Please wait...' : 'Place order • ' + money(total)} onPress={place} disabled={busy}
+        <Btn kind="g" t={busy ? 'Please wait...' : feeState === 'loading' ? 'Checking delivery charge...' : !canPlace ? 'Delivery not available' : pay === 'khata' && kLoading ? 'Checking Khata credit...' : pay === 'khata' && !kOk ? 'Khata credit not enough' : 'Place order • ' + money(orderTotal)} onPress={place} disabled={busy || !canPlace || (pay === 'khata' && (kLoading || !kOk))}
           style={{ minHeight: 54 }} />
         {!session && <Text
           style={[s.sub, { textAlign: 'center', marginTop: 8 }]}>Login or sign up to continue</Text>}
@@ -2342,7 +2754,7 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
 
 function Success({ done, onTrack, onHome }) {
   return (
-    <ScrollView contentContainerStyle={{ alignItems: 'center', padding: 24, paddingTop: 70 }}>
+    <ScrollView contentContainerStyle={{ alignItems: 'center', padding: 24, paddingTop: 70 }} style={{ backgroundColor: '#eefaf2' }}>
       <View style={s.okOuter}>
         <View style={s.okInner}>
           <RNText style={{ color: '#fff', fontSize: 44, fontWeight: '800' }}>✓</RNText>
@@ -2358,8 +2770,14 @@ function Success({ done, onTrack, onHome }) {
         <RNText style={[s.sub, { marginTop: 4 }]} selectable>ID: {done.id}</RNText>
         <RNText
           style={[s.sub, { marginVertical: 8 }]}>{done.items.map((i) => i.p.name + ' ' + qtyLabel(i.qty, i.p.unit)).join(', ')}</RNText>
+        {done.subtotal !== undefined && (
+          <View style={{ marginBottom: 6 }}>
+            <View style={s.rowB}><Text style={s.sub}>Subtotal</Text><RNText style={{ color: INK, fontWeight: '700' }}>{money(done.subtotal)}</RNText></View>
+            <View style={[s.rowB, { marginTop: 2 }]}><Text style={s.sub}>Delivery charge</Text><RNText style={{ color: INK, fontWeight: '700' }}>{money(done.deliveryFee || 0)}</RNText></View>
+          </View>
+        )}
         <View style={s.rowB}>
-          <Text style={s.sub}>{(done.pickup ? 'Pickup' : 'Home Delivery') + ' • ' + (done.pay === 'upi' ? 'UPI' : 'Cash on Delivery')}</Text>
+          <Text style={s.sub}>{(done.pickup ? 'Pickup' : 'Home Delivery') + ' • ' + (done.pay === 'upi' ? 'UPI' : done.pay === 'khata' ? 'Khata (Udhaar)' : 'Cash on Delivery')}</Text>
           <Text style={s.price}>{money(done.total)}</Text>
         </View>
         {done.pay === 'upi' && !!done.utr && (
@@ -2371,6 +2789,10 @@ function Success({ done, onTrack, onHome }) {
         {done.pay === 'upi' && <Text
           style={[s.sub, { marginTop: 6 }]}>UPI payment is confirmed only after the shop verifies it.</Text>}
         {!!done.utrMsg && <View style={{ marginTop: 6 }}><Msg t={done.utrMsg} /></View>}
+        {done.pay === 'khata' && <Text
+          style={[s.sub, { marginTop: 6 }]}>{'This amount is added to your Khata due at ' + done.shop.name + '.'}</Text>}
+        {!!done.khataMsg && <View style={{ marginTop: 6 }}><Msg t={done.khataMsg} /></View>}
+        {!!done.amtMsg && <View style={{ marginTop: 6 }}><Msg t={done.amtMsg} /></View>}
       </View>
       <View style={{ alignSelf: 'stretch', gap: 10, marginTop: 14 }}>
         <Btn t="View my orders" onPress={onTrack} />
@@ -2378,12 +2800,52 @@ function Success({ done, onTrack, onHome }) {
       </View>
     </ScrollView>
   );
+            }
+// ======================================================================
+// BUYER: FEEDBACK SHEET (rate a delivered order)
+// ======================================================================
+function ReviewSheet({ o, onClose, onDone }) {
+  const [rating, setRating] = useState(5);
+  const [txt, setTxt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const LBL = ['', 'Very bad', 'Bad', 'Okay', 'Good', 'Excellent'];
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true); setMsg('');
+    try {
+      await newRpc('submit_review', { p_order: o.id, p_rating: rating, p_comment: txt.trim() || null });
+      onDone({ order_id: o.id, rating, comment: txt.trim() });
+    } catch (e) {
+      if (e && (e.code === '23505' || /duplicate/i.test(String(e.message || '')))) setMsg('You already reviewed this order.');
+      else setMsg(errMsg(e));
+    }
+    setBusy(false);
+  };
+  return (
+    <Sheet onClose={onClose}>
+      <View style={s.rowB}>
+        <Text style={s.h}>Rate your order</Text>
+        <TouchableOpacity onPress={onClose}><Text style={{ color: MUTE }}>Close</Text></TouchableOpacity>
+      </View>
+      <RNText style={s.sub}>{(o.shops ? o.shops.name : '') + ' · ' + orderNo(o)}</RNText>
+      <View style={{ alignItems: 'center', marginVertical: 16 }}>
+        <Stars v={rating} onChange={setRating} size={42} />
+        <RNText style={{ color: GOLD, fontWeight: '800', marginTop: 6, fontSize: 16 }}>{LBL[rating]}</RNText>
+      </View>
+      <Field label="Your feedback (optional)" value={txt} onChangeText={setTxt} multiline autoCapitalize="sentences"
+        placeholder="Product quality, delivery, shop behaviour..." />
+      <Msg t={msg} />
+      <View style={{ height: 8 }} />
+      <Btn kind="g" t={busy ? 'Please wait...' : 'Submit feedback'} onPress={submit} disabled={busy} style={{ minHeight: 50 }} />
+    </Sheet>
+  );
 }
 
 // ======================================================================
 // BUYER: ORDERS + TRACK ORDER  (get_my_orders_paginated RPC)
 // ======================================================================
-function TrackOrder({ o, onBack, onReorder }) {
+function TrackOrder({ o, onBack, onReorder, review, onRate }) {
   const [more, setMore] = useState(false);
   const [pinfo] = useOrderPay(o);
   const items = o.order_items || [];
@@ -2395,8 +2857,8 @@ function TrackOrder({ o, onBack, onReorder }) {
   const shopPhone = o.shops ? o.shops.phone : '';
   const po = o.pay === 'upi' && pinfo.status ? { ...o, payment_status: pinfo.status } : o;
   return (
-    <ScrollView>
-      <View style={[s.head, { paddingBottom: 20 }]}>
+    <ScrollView style={{ backgroundColor: BG }}>
+      <View style={[s.head, { paddingBottom: 20, backgroundColor: AMBER }]}>
         <View style={s.rowB}>
           <TouchableOpacity onPress={onBack}>
             <RNText style={{ color: '#fff', fontSize: 24 }}>←</RNText>
@@ -2407,11 +2869,11 @@ function TrackOrder({ o, onBack, onReorder }) {
         </View>
         <Text style={s.headT}>My Order</Text>
         <RNText
-          style={{ color: '#cfdcf7', marginTop: 2 }}>{orderNo(o)}{shopName ? ' · ' + shopName : ''}</RNText>
+          style={{ color: '#fff3d9', marginTop: 2 }}>{orderNo(o)}{shopName ? ' · ' + shopName : ''}</RNText>
       </View>
 
       {!cancelled && (
-        <View style={[s.card, s.rowB]}>
+        <View style={[s.card, s.rowB, { backgroundColor: '#eefaf2', borderColor: '#bfe3cf' }]}>
           <View style={{ flex: 1 }}>
             <Text style={s.sub}>{o.pickup ? 'Pickup' : 'Estimated Delivery'}</Text>
             <Text
@@ -2505,6 +2967,23 @@ function TrackOrder({ o, onBack, onReorder }) {
         )}
       </View>
 
+      {o.status === 'delivered' && (
+        <View style={[s.card, { backgroundColor: '#fff8e6', borderColor: '#f3dca0' }]}>
+          <Text style={s.h}>Rate your order</Text>
+          {review ? (
+            <View>
+              <Stars v={Number(review.rating)} size={26} />
+              {!!review.comment && <RNText style={{ color: INK, marginTop: 6 }}>{review.comment}</RNText>}
+            </View>
+          ) : (
+            <View>
+              <Text style={s.sub}>How was your experience with this shop?</Text>
+              <Btn t="Submit feedback" onPress={onRate} style={{ marginTop: 10, backgroundColor: GOLD }} />
+            </View>
+          )}
+        </View>
+      )}
+
       <View style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
         <View style={[s.mic, { backgroundColor: '#dcf5e9' }]}>
           <RNText style={{ fontSize: 22 }}>🎧</RNText>
@@ -2530,6 +3009,8 @@ function BuyerOrders({ session, needLogin, onReorder }) {
   const [err, setErr] = useState('');
   const [selId, setSelId] = useState(null);
   const [limit, setLimit] = useState(PAGE);
+  const [rateO, setRateO] = useState(null);
+  const [reviews, , addReview] = useMyReviews(session);
   const limRef = useRef(PAGE);
   limRef.current = limit;
   const load = useCallback((silent) => {
@@ -2555,52 +3036,217 @@ function BuyerOrders({ session, needLogin, onReorder }) {
     ]);
   };
   const sel = selId ? os.find((x) => x.id === selId) : null;
-  if (sel) return <TrackOrder o={sel} onBack={() => setSelId(null)} onReorder={onReorder} />;
+  const sheet = rateO ? (
+    <ReviewSheet o={rateO} onClose={() => setRateO(null)}
+      onDone={(rv) => { addReview(rv.order_id, rv); setRateO(null); }} />
+  ) : null;
+  if (sel) {
+    return (
+      <View style={{ flex: 1 }}>
+        <TrackOrder o={sel} onBack={() => setSelId(null)} onReorder={onReorder}
+          review={reviews[sel.id]} onRate={() => setRateO(sel)} />
+        {sheet}
+      </View>
+    );
+  }
   return (
-    <ScrollView refreshControl={<RefreshControl refreshing={ld} onRefresh={() => load()} />}>
-      <Head title="My Orders" sub="Track live orders and view past purchases" />
-      {!session && (
-        <View style={{ padding: 14 }}>
-          <Text style={s.empty}>Login or sign up to continue</Text>
-          <Btn t="Login" onPress={needLogin} />
+    <View style={{ flex: 1 }}>
+      <ScrollView style={{ backgroundColor: BG }} refreshControl={<RefreshControl refreshing={ld} onRefresh={() => load()} />}>
+        <Head title="My Orders" sub="Track live orders and view past purchases" color={AMBER} />
+        {!session && (
+          <View style={{ padding: 14 }}>
+            <Text style={s.empty}>Login or sign up to continue</Text>
+            <Btn t="Login" onPress={needLogin} />
+          </View>
+        )}
+        <Msg t={err} />
+        {session && !ld && !err && os.length === 0 && <Text style={s.empty}>No orders yet.</Text>}
+        {os.map((o) => {
+          const items = o.order_items || [];
+          const first = items[0];
+          const rv = reviews[o.id];
+          const edge = o.status === 'delivered' ? GREEN : o.status === 'cancelled' ? RED : BLUE;
+          return (
+            <TouchableOpacity key={o.id} style={[s.card, { borderLeftWidth: 5, borderLeftColor: edge }]} onPress={() => setSelId(o.id)} activeOpacity={0.85}>
+              <View style={s.rowB}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={s.shopN}>{orderNo(o)}</Text>
+                  <Tag t={STATUS[o.status] || o.status} kind={o.status === 'delivered' ? 'g' : o.status === 'cancelled' ? 'r' : 'b'} />
+                </View>
+                <RNText style={s.sub}>{when(o.created_at)}</RNText>
+              </View>
+              <View style={[s.prow, { marginTop: 8 }]}>
+                <View style={{ flex: 1 }}>
+                  <RNText
+                    style={s.shopN}>{first ? first.name + (items.length > 1 ? ' + ' + (items.length - 1) + ' more' : '') : ''}</RNText>
+                  <RNText style={s.sub}>{o.shops ? o.shops.name : ''}</RNText>
+                </View>
+                <Text style={s.price}>{money(o.total)}</Text>
+              </View>
+              <View style={s.rowB}>
+                <Text style={s.sub}>{(o.pickup ? 'Pickup' : 'Home Delivery') + ' • ' + (o.pay === 'upi' ? 'UPI' : o.pay === 'khata' ? 'Khata' : 'Cash on Delivery')}</Text>
+                <Text style={s.link}>View Details</Text>
+              </View>
+              {o.status === 'cancelled' && !!o.cancel_reason && <Text
+                style={{ color: RED, marginTop: 4 }}>{o.cancel_reason}</Text>}
+              {o.status === 'new' && <Btn small kind="r" t="Cancel order" onPress={() => cancel(o)}
+                style={{ marginTop: 10, alignSelf: 'flex-start' }} />}
+              {o.status === 'delivered' && (rv
+                ? <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}><Stars v={Number(rv.rating)} size={16} /><Text style={s.sub}>Your rating</Text></View>
+                : <Btn small t="⭐ Rate your order" onPress={() => setRateO(o)} style={{ marginTop: 10, alignSelf: 'flex-start', backgroundColor: GOLD }} />)}
+            </TouchableOpacity>
+          );
+        })}
+        {os.length >= limit && (
+          <View style={{ padding: 14 }}><Btn kind="o" t="Load more" onPress={() => setLimit(limit + PAGE)} /></View>
+        )}
+        <View style={{ height: 30 }} />
+      </ScrollView>
+      {sheet}
+    </View>
+  );
+}
+
+// ======================================================================
+// BUYER: NOTIFICATIONS - order updates, feedback request, shop offers, new products
+// ======================================================================
+function NoteCard({ ic, bg, title, text, time, onPress, right }) {
+  return (
+    <TouchableOpacity activeOpacity={onPress ? 0.85 : 1} onPress={onPress}
+      style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: bg || '#fff' }]}>
+      <View style={[s.mic, { backgroundColor: '#fff' }]}><RNText style={{ fontSize: 22 }}>{ic}</RNText></View>
+      <View style={{ flex: 1 }}>
+        <RNText style={s.shopN} numberOfLines={2}>{title}</RNText>
+        {!!text && <RNText style={s.sub} numberOfLines={2}>{text}</RNText>}
+        {!!time && <RNText style={[s.sub, { marginTop: 2, opacity: 0.8 }]}>{time}</RNText>}
+      </View>
+      {right}
+    </TouchableOpacity>
+  );
+}
+function BuyerNotifications({ session, shops, products, needLogin, onShop, onProduct, onOrders, onBack }) {
+  const [os, setOs] = useState([]);
+  const [ld, setLd] = useState(false);
+  const [rateO, setRateO] = useState(null);
+  const [reviews, , addReview] = useMyReviews(session);
+  const load = useCallback(() => {
+    if (!session) { setOs([]); return; }
+    setLd(true);
+    rpc('get_my_orders_paginated', { p_limit: 10, p_offset: 0 })
+      .then((r) => setOs(unwrapList(r).map(normOrder))).catch(() => {}).finally(() => setLd(false));
+  }, [session]);
+  useEffect(() => { load(); }, [load]);
+  const offers = shops.filter((x) => x.offer);
+  const newest = [...products].filter(inStock)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, 8);
+  const toRate = os.filter((o) => o.status === 'delivered' && !reviews[o.id]);
+  const ICON = { new: '🧾', accepted: '✅', preparing: '👨‍🍳', ready: '🛍️', on_the_way: '🛵', delivered: '🎉', cancelled: '❌' };
+  const empty = !offers.length && !newest.length && !os.length;
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView style={{ backgroundColor: BG }} refreshControl={<RefreshControl refreshing={ld} onRefresh={load} />}>
+        <Head title="Notifications" sub="Orders, offers and new products" onBack={onBack} color={PINK} />
+
+        {toRate.length > 0 && (
+          <View>
+            <Text style={[s.h, s.sec]}>⭐ Rate your order</Text>
+            {toRate.slice(0, 3).map((o) => (
+              <NoteCard key={'r' + o.id} ic="⭐" bg="#fff8e6"
+                title={'How was ' + (o.shops && o.shops.name ? o.shops.name : 'your order') + '?'}
+                text={orderNo(o) + ' was delivered. Tell us about the product and the shop.'}
+                time={o.updated_at ? when(o.updated_at) : when(o.created_at)}
+                onPress={() => setRateO(o)}
+                right={<Btn small t="Rate" onPress={() => setRateO(o)} style={{ backgroundColor: GOLD }} />} />
+            ))}
+          </View>
+        )}
+
+        <Text style={[s.h, s.sec]}>📦 Order updates</Text>
+        {!session && (
+          <View style={[s.card, { alignItems: 'center' }]}>
+            <Text style={s.sub}>Login to see your order updates</Text>
+            <Btn small t="Login" onPress={needLogin} style={{ marginTop: 8 }} />
+          </View>
+        )}
+        {session && os.length === 0 && <Text style={[s.sub, { marginHorizontal: 14 }]}>No orders yet.</Text>}
+        {os.slice(0, 6).map((o) => (
+          <NoteCard key={o.id} ic={ICON[o.status] || '📦'} bg={o.status === 'cancelled' ? '#fdecef' : '#eef3ff'}
+            title={orderNo(o) + ' · ' + (o.status === 'cancelled' ? 'Order cancelled' : (STEPS[o.status] || ['', ''])[0])}
+            text={(o.shops && o.shops.name ? o.shops.name + ' · ' : '') + (o.status === 'cancelled' ? (o.cancel_reason || '') : (STEPS[o.status] || ['', ''])[1])}
+            time={when(o.updated_at || o.created_at)} onPress={onOrders} />
+        ))}
+
+        <Text style={[s.h, s.sec]}>🎁 Shop offers</Text>
+        {offers.length === 0 && <Text style={[s.sub, { marginHorizontal: 14 }]}>No offers right now.</Text>}
+        {offers.map((x) => (
+          <NoteCard key={'o' + x.id} ic="🎁" bg="#fff3e3" title={x.name + ': ' + x.offer}
+            text={catLabel(x) + ' · ' + x.area} onPress={() => onShop(x)}
+            right={<Photo url={x.photo_url} name={x.name} size={44} round />} />
+        ))}
+
+        <Text style={[s.h, s.sec]}>🆕 New products</Text>
+        {newest.length === 0 && <Text style={[s.sub, { marginHorizontal: 14 }]}>No new products yet.</Text>}
+        {newest.map((p) => (
+          <NoteCard key={'p' + p.id} ic="🆕" bg="#eafaf0"
+            title={p.name + ' · ' + money(p.price) + '/' + unitLabel(p.unit)}
+            text={(p.shops ? p.shops.name : '') + (p.category ? ' · ' + p.category : '') + ' · ' + qtyLabel(Number(p.online_qty), p.unit) + ' in stock'}
+            onPress={() => onProduct(p)}
+            right={<Photo url={p.image_url} name={p.name} size={52} />} />
+        ))}
+        {empty && !ld && <Text style={s.empty}>No notifications yet.</Text>}
+        <View style={{ height: 30 }} />
+      </ScrollView>
+      {rateO && (
+        <ReviewSheet o={rateO} onClose={() => setRateO(null)}
+          onDone={(rv) => { addReview(rv.order_id, rv); setRateO(null); }} />
+      )}
+    </View>
+  );
+}
+
+// ======================================================================
+// BUYER: SAVED ADDRESS PAGE
+// ======================================================================
+function AddressPage({ profile, onSave, loc, onLoc, onBack }) {
+  const [d, setD] = useState(profile);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [good, setGood] = useState(false);
+  const save = async () => {
+    if (busy) return;
+    if (d.phone && !/^\d{10}$/.test(d.phone.trim())) { setGood(false); setMsg('Phone (10 digits)'); return; }
+    setBusy(true); setMsg('');
+    const m = await onSave(d);
+    setBusy(false);
+    if (m) { setGood(false); setMsg(m); } else { setGood(true); setMsg('✅ Saved'); }
+  };
+  return (
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+      <View style={[s.head, { backgroundColor: DARK, paddingBottom: 56 }]}>
+        <TouchableOpacity onPress={onBack}><Text style={{ color: '#e6eeff', fontSize: 16 }}>← Back</Text></TouchableOpacity>
+        <Text style={s.headT}>Saved Addresses</Text>
+        <Text style={{ color: '#e6eeff', marginTop: 2 }}>Used automatically at checkout</Text>
+      </View>
+      <TouchableOpacity onPress={onLoc} activeOpacity={0.85}
+        style={[s.card, { marginTop: -36, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#e8f0ff' }]}>
+        <View style={[s.mic, { backgroundColor: '#fff' }]}><RNText style={{ fontSize: 22 }}>📍</RNText></View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.shopN}>Delivery Location</Text>
+          <RNText style={s.sub} numberOfLines={2}>{loc && (loc.full || loc.area) ? (loc.full || loc.area) : trs('Select your location')}</RNText>
         </View>
-      )}
-      <Msg t={err} />
-      {session && !ld && !err && os.length === 0 && <Text style={s.empty}>No orders yet.</Text>}
-      {os.map((o) => {
-        const items = o.order_items || [];
-        const first = items[0];
-        return (
-          <TouchableOpacity key={o.id} style={s.card} onPress={() => setSelId(o.id)} activeOpacity={0.85}>
-            <View style={s.rowB}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={s.shopN}>{orderNo(o)}</Text>
-                <Tag t={STATUS[o.status] || o.status} kind={o.status === 'delivered' ? 'g' : o.status === 'cancelled' ? 'r' : 'b'} />
-              </View>
-              <RNText style={s.sub}>{when(o.created_at)}</RNText>
-            </View>
-            <View style={[s.prow, { marginTop: 8 }]}>
-              <View style={{ flex: 1 }}>
-                <RNText
-                  style={s.shopN}>{first ? first.name + (items.length > 1 ? ' + ' + (items.length - 1) + ' more' : '') : ''}</RNText>
-                <RNText style={s.sub}>{o.shops ? o.shops.name : ''}</RNText>
-              </View>
-              <Text style={s.price}>{money(o.total)}</Text>
-            </View>
-            <View style={s.rowB}>
-              <Text style={s.sub}>{(o.pickup ? 'Pickup' : 'Home Delivery') + ' • ' + (o.pay === 'upi' ? 'UPI' : 'Cash on Delivery')}</Text>
-              <Text style={s.link}>View Details</Text>
-            </View>
-            {o.status === 'cancelled' && !!o.cancel_reason && <Text
-              style={{ color: RED, marginTop: 4 }}>{o.cancel_reason}</Text>}
-            {o.status === 'new' && <Btn small kind="r" t="Cancel order" onPress={() => cancel(o)}
-              style={{ marginTop: 10, alignSelf: 'flex-start' }} />}
-          </TouchableOpacity>
-        );
-      })}
-      {os.length >= limit && (
-        <View style={{ padding: 14 }}><Btn kind="o" t="Load more" onPress={() => setLimit(limit + PAGE)} /></View>
-      )}
+        <RNText style={{ color: BLUE, fontSize: 22 }}>›</RNText>
+      </TouchableOpacity>
+      <View style={s.card}>
+        <Text style={s.h}>🏠 My address</Text>
+        <Field label="Your name" value={d.name} onChangeText={(v) => setD({ ...d, name: v })} autoCapitalize="words" />
+        <Field label="Phone (10 digits)" value={d.phone} onChangeText={(v) => setD({ ...d, phone: v })}
+          keyboardType="number-pad" maxLength={10} />
+        <Field label="Full address" value={d.address} onChangeText={(v) => setD({ ...d, address: v })}
+          multiline autoCapitalize="sentences" />
+        <Msg t={msg} ok={good} />
+        <View style={{ height: 8 }} />
+        <Btn t={busy ? 'Please wait...' : 'Save profile'} onPress={save} disabled={busy} style={{ minHeight: 50 }} />
+      </View>
       <View style={{ height: 30 }} />
     </ScrollView>
   );
@@ -2608,18 +3254,29 @@ function BuyerOrders({ session, needLogin, onReorder }) {
 
 // ======================================================================
 // SELLER: shop registration (used only after seller login)
-// FIX: 1) seller profile (role = seller) is saved first, with the real authenticated user id
-//      2) an existing shop is re-used (no duplicate shop)
-//      3) register_my_shop is called only when this user has no shop yet
-//      4) the returned shop is checked (owner_id must be this user)
+//  - shop photo is uploaded from the gallery (no photo link)
+//  - a shop can select MANY categories
 // ======================================================================
 function SellerSetup({ onCreated, onCancel, defaultArea }) {
+   
   const [f, setF] = useState({ name: '', owner: '', phone: '', area: defaultArea || '',
-    category: 'Grocery', photo: '' });
+    cats: ['Grocery'], photo: '' });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pbusy, setPbusy] = useState(false);
   const lock = useRef(false);
   const set = (k) => (v) => setF({ ...f, [k]: v });
+  const toggleCat = (c) => {
+    const has = f.cats.includes(c);
+    if (has && f.cats.length === 1) return;
+    setF({ ...f, cats: has ? f.cats.filter((x) => x !== c) : [...f.cats, c] });
+  };
+  const pickPhoto = async () => {
+    setPbusy(true); setMsg('');
+    try { const d = await pickShopPhoto(); if (d) setF((p) => ({ ...p, photo: d })); }
+    catch (e) { setMsg(e.message || 'Could not open the gallery'); }
+    setPbusy(false);
+  };
   const save = async () => {
     if (busy || lock.current) return;
     if (!f.name.trim() || !f.owner.trim() || !f.area.trim() || !/^\d{10}$/.test(f.phone.trim())) { setMsg('Enter shop name, owner, 10-digit phone and area'); return; }
@@ -2627,10 +3284,8 @@ function SellerSetup({ onCreated, onCancel, defaultArea }) {
     try {
       const uid = SESSION && SESSION.uid;
       if (!uid) throw new Error('Session expired. Please log in again.');
-      // 1) seller profile row (role = seller) for the authenticated user
       await ensureSellerProfile(uid, { name: f.owner.trim(), phone: f.phone.trim(), area: f.area.trim(),
         address: f.area.trim(), email: SESSION.email });
-      // 2) never create a second shop for the same owner
       let shop = null;
       try {
         let ex = await shopRpc('mine');
@@ -2639,11 +3294,10 @@ function SellerSetup({ onCreated, onCancel, defaultArea }) {
       } catch (e) {
         if (e.network || e.missingRpc) throw e;
       }
-      // 3) create the shop with the existing register_my_shop RPC (it sets owner_id = auth.uid())
       if (!shop) {
         let r = await shopRpc('create', {
           p_name: f.name.trim(), p_owner_name: f.owner.trim(), p_phone: f.phone.trim(),
-          p_area: f.area.trim(), p_category: f.category, p_photo_url: f.photo.trim() || null,
+          p_area: f.area.trim(), p_category: f.cats.join(','), p_photo_url: f.photo || null,
         });
         if (Array.isArray(r)) r = r[0];
         if (r && r.id) shop = r;
@@ -2666,14 +3320,16 @@ function SellerSetup({ onCreated, onCancel, defaultArea }) {
   return (
     <View style={s.card}>
       <Text style={s.h}>Register your shop</Text>
+      <Text style={s.label}>Shop photo</Text>
+      <PhotoPicker url={f.photo} name={f.name || 'S'} size={90} round onPick={pickPhoto} busy={pbusy}
+        label="Upload shop photo" onRemove={() => setF({ ...f, photo: '' })} />
       <Field label="Shop name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
       <Field label="Owner name" value={f.owner} onChangeText={set('owner')} autoCapitalize="words" />
       <Field label="Phone number" value={f.phone} onChangeText={set('phone')} keyboardType="number-pad" maxLength={10} />
       <Field label="Village / Area" value={f.area} onChangeText={set('area')} autoCapitalize="words" />
-      <Field label="Shop photo link (optional)" value={f.photo} onChangeText={set('photo')} placeholder="https://..." />
-      <Text style={s.label}>Category</Text>
+      <Text style={s.label}>Category (select all that you sell)</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
-        {SHOP_CATS.map((c) => <Chip key={c} t={c} on={f.category === c} onPress={() => setF({ ...f, category: c })} />)}
+        {SHOP_CATS.map((c) => <Chip key={c} t={catMeta(c).ic + ' ' + c} on={f.cats.includes(c)} color={PURPLE} onPress={() => toggleCat(c)} />)}
       </View>
       <Msg t={msg} />
       <Btn t={busy ? 'Please wait...' : 'Open my shop'} onPress={save} disabled={busy} />
@@ -2685,10 +3341,10 @@ function SellerSetup({ onCreated, onCancel, defaultArea }) {
 function SellerSetupScreen({ defaultArea, onCreated, onLogout, loadErr }) {
   return (
     <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
-      <View style={[s.head, { paddingBottom: 24 }]}>
+      <View style={[s.head, { paddingBottom: 24, backgroundColor: PURPLE }]}>
         <Logo size={28} />
         <Text style={[s.headT, { marginTop: 12 }]}>Establish Your Local Business Presence</Text>
-        <Text style={{ color: '#cfdcf7', marginTop: 4 }}>Sell your products online and reach shoppers near you</Text>
+        <Text style={{ color: '#e6eeff', marginTop: 4 }}>Sell your products online and reach shoppers near you</Text>
       </View>
       <Msg t={loadErr} />
       <SellerSetup defaultArea={defaultArea} onCreated={onCreated} onCancel={onLogout} />
@@ -2696,30 +3352,17 @@ function SellerSetupScreen({ defaultArea, onCreated, onLogout, loadErr }) {
     </ScrollView>
   );
 }
-
 // ======================================================================
 // PROFILE (guest and buyer use the SAME design)
 // - guest           : login card + business card ("Create a Shop Profile" -> seller login)
-// - logged-in buyer : account card + Saved Addresses + Log Out, NO business card
+// - logged-in buyer : account card + colourful tiles + Log Out, NO business card
 // ======================================================================
-function Profile({ session, needLogin, onPartner, onLogout, onOrders, lang, onLang, profile, onSaveProfile, loc, onLoc }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(profile);
-  const [pbusy, setPbusy] = useState(false);
-  const [pmsg, setPmsg] = useState('');
+function Profile({ session, needLogin, onPartner, onLogout, onOrders, lang, onLang, profile, loc, onLoc,
+  onAddr, onSupport, onNotif, onKhata }) {
   const guest = !session;
   const display = profile.name || (session ? session.email : 'Guest');
   const langName = (LANGS.find((l) => l[0] === lang) || LANGS[0])[1];
   const locText = loc && (loc.full || loc.area) ? (loc.full || loc.area) : 'Select your location';
-  const saveDraft = async () => {
-    if (pbusy) return;
-    if (draft.phone && !/^\d{10}$/.test(draft.phone.trim())) { setPmsg('Phone (10 digits)'); return; }
-    setPbusy(true); setPmsg('');
-    const m = await onSaveProfile(draft);
-    setPbusy(false);
-    if (m) { setPmsg(m); } else { setEditing(false); }
-  };
-  const toggleEdit = () => { setDraft(profile); setPmsg(''); setEditing(!editing); };
 
   return (
     <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
@@ -2761,38 +3404,26 @@ function Profile({ session, needLogin, onPartner, onLogout, onOrders, lang, onLa
         </View>
       )}
 
-      {/* quick tiles */}
+      {/* colourful tiles - each one opens its own page */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between',
         paddingHorizontal: 14, marginTop: 4 }}>
-        <ProfTile ic="📍" bg="#e8f0ff" title="Delivery Location" sub={locText} onPress={onLoc} />
-        {!guest && (
-          <ProfTile ic="🏠" bg="#e3ecff" title="Saved Addresses" sub={profile.address || 'Full address'}
-            onPress={toggleEdit} />
-        )}
-        <ProfTile ic="🌐" bg="#e3ecff" title="Language" sub={langName} onPress={() => onLang('pick')} />
         <ProfTile ic="📦" bg="#fff0d6" title="My Orders"
           sub={guest ? 'Login or sign up to continue' : 'Track live orders and view past purchases'}
           onPress={guest ? needLogin : onOrders} />
-        <ProfTile ic="🎧" bg="#dcf5e9" title="Customer Support" sub="Instant chat & order queries"
-          onPress={() => Alert.alert(trs('Customer Support'), trs('Coming soon'))} />
+          <ProfTile ic="📒" bg="#fff0d6" title="My Khata"
+  sub={guest ? 'Login or sign up to continue' : 'View credit balance and payment history'}
+  onPress={guest ? needLogin : onKhata} />
+        <ProfTile ic="🔔" bg="#fde4ea" title="Notifications" sub="Orders, offers & new products" onPress={onNotif} />
+        <ProfTile ic="📍" bg="#e8f0ff" title="Delivery Location" sub={locText} onPress={onLoc} />
+        {!guest && (
+          <ProfTile ic="🏠" bg="#e6e8ff" title="Saved Addresses" sub={profile.address || 'Full address'} onPress={onAddr} />
+        )}
+        <ProfTile ic="🌐" bg="#d9f6ff" title="Language" sub={langName} onPress={() => onLang('pick')} />
+        <ProfTile ic="🎧" bg="#dcf5e9" title="Customer Support" sub={SUPPORT_PHONE} onPress={onSupport} />
         {!guest && (
           <ProfTile ic="↪" bg="#fdecef" title="Log Out" sub="End shopping session" onPress={onLogout} danger />
         )}
       </View>
-
-      {/* saved address form (buyer) */}
-      {!guest && editing && (
-        <View style={s.card}>
-          <Text style={s.h}>Saved Addresses</Text>
-          <Field label="Your name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} autoCapitalize="words" />
-          <Field label="Phone (10 digits)" value={draft.phone} onChangeText={(v) => setDraft({ ...draft, phone: v })}
-            keyboardType="number-pad" maxLength={10} />
-          <Field label="Full address" value={draft.address} onChangeText={(v) => setDraft({ ...draft, address: v })}
-            multiline autoCapitalize="sentences" />
-          <Msg t={pmsg} />
-          <Btn t={pbusy ? 'Please wait...' : 'Save profile'} onPress={saveDraft} disabled={pbusy} />
-        </View>
-      )}
 
       {/* business card (guest only) */}
       {guest && (
@@ -2861,39 +3492,50 @@ async function bumpStock(shop, p, reload) {
     return errMsg(e);
   }
 }
+// save the shop offer / open flag (existing update_my_shop RPC)
+async function patchShop(shop, setShop, b) {
+  const body = { p_shop_id: shop.id };
 
-function SellerDash({ shop, setShop, os, products, goTab, openOrder, reloadP, ordersErr }) {
+  if ('is_open' in b) body.p_is_open = b.is_open;
+
+  if ('offer' in b) {
+    body.p_offer = b.offer;
+    body.p_update_offer = true;
+  }
+
+  if ('offer_end_date' in b) {
+    body.p_offer_end_date = b.offer_end_date || null;
+    body.p_update_offer_end_date = true;
+  }
+
+  let r = await shopRpc('update', body);
+  if (Array.isArray(r)) r = r[0];
+
+  setShop(r && r.id ? { ...shop, ...r } : { ...shop, ...b });
+}
+
+function SellerDash({ shop, setShop, os, products, goTab, openOrder, reloadP, ordersErr, onBell }) {
   const [offer, setOffer] = useState(shop.offer || '');
+  const [offerEndDate, setOfferEndDate] = useState(shop.offer_end_date || '');
   const [msg, setMsg] = useState('');
   const patch = async (b) => {
-    try {
-      const body = { p_shop_id: shop.id };
-      if ('is_open' in b) body.p_is_open = b.is_open;
-      if ('offer' in b) { body.p_offer = b.offer; body.p_update_offer = true; }
-      let r = await shopRpc('update', body);
-      if (Array.isArray(r)) r = r[0];
-      setShop(r && r.id ? { ...shop, ...r } : { ...shop, ...b }); setMsg('✅ Saved');
-    } catch (e) { setMsg(errMsg(e)); }
+    try { await patchShop(shop, setShop, b); setMsg('✅ Saved'); } catch (e) { setMsg(errMsg(e)); }
   };
-  const newOrdersCount = os.filter(
-  (o) => o.status === 'new'
-).length;
-
-const totalOrdersCount = os.length;
-
-const sales = os
-  .filter((o) => o.status !== 'cancelled')
-  .reduce((total, o) => total + Number(o.total || 0), 0);
+  const newOrdersCount = os.filter((o) => o.status === 'new').length;
+  const totalOrdersCount = os.length;
+  const sales = os
+    .filter((o) => o.status !== 'cancelled')
+    .reduce((total, o) => total + Number(o.total || 0), 0);
   const lowP = products.filter((p) => p.active !== false && Number(p.online_qty) <= Number(p.low_alert || 5));
   const addStock = async (p) => { const m = await bumpStock(shop, p, reloadP); setMsg(m); };
   const stats = [
-  ['🛍️', newOrdersCount, 'New Orders'],
-  ['📋', totalOrdersCount, 'Total Orders'],
-  ['₹', money(sales), 'Total Sales'],
-  ['⭐', shop.rating > 0 ? shop.rating : '—', 'Shop Rating'],
-];
+    ['🛍️', newOrdersCount, 'New Orders', '#e3ecff'],
+    ['📋', totalOrdersCount, 'Total Orders', '#fff0d6'],
+    ['₹', money(sales), 'Total Sales', '#dcf5e1'],
+    ['⭐', shop.rating > 0 ? shop.rating : '—', 'Shop Rating', '#fff3c4'],
+  ];
   return (
-    <ScrollView keyboardShouldPersistTaps="handled">
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
       <View style={[s.head, { paddingBottom: 26 }]}>
         <View style={s.rowB}>
           <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', flex: 1 }}>
@@ -2901,9 +3543,13 @@ const sales = os
             <View style={{ flex: 1 }}>
               <RNText
                 style={{ color: '#fff', fontSize: 20, fontWeight: '800' }} numberOfLines={1}>{shop.name} ✔</RNText>
-              <RNText style={{ color: '#cfdcf7' }} numberOfLines={1}>{shop.category} · {shop.area}</RNText>
+              <RNText style={{ color: '#cfdcf7' }} numberOfLines={1}>{catLabel(shop)} · {shop.area}</RNText>
             </View>
           </View>
+          <TouchableOpacity onPress={onBell} style={{ marginRight: 10 }}>
+            <RNText style={{ fontSize: 24 }}>🔔</RNText>
+            {newOrdersCount > 0 && <View style={s.badge}><RNText style={s.badgeT}>{newOrdersCount}</RNText></View>}
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => patch({ is_open: !shop.is_open })}
             style={[s.pill, { backgroundColor: shop.is_open ? '#dcf5e1' : '#fbe0db' }]}>
             <Text
@@ -2915,14 +3561,8 @@ const sales = os
       <Msg t={ordersErr} />
       <View style={s.card}>
         <Text style={s.h}>Today's Summary</Text>
-        <View style={{ flexDirection: 'row' }}>
-          {stats.map(([ic, v, l]) => (
-            <View key={l} style={{ flex: 1, alignItems: 'center' }}>
-              <RNText style={{ fontSize: 22 }}>{ic}</RNText>
-              <RNText style={{ fontSize: 17, fontWeight: '800', color: INK, marginTop: 4 }}>{v}</RNText>
-              <Text style={{ fontSize: 11, color: MUTE, textAlign: 'center' }}>{l}</Text>
-            </View>
-          ))}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+          {stats.map(([ic, v, l, bg]) => <StatTile key={l} ic={ic} v={v} label={trs(l)} bg={bg} />)}
         </View>
       </View>
       <View style={s.card}>
@@ -2934,13 +3574,26 @@ const sales = os
           <RNText style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>{shop.offer}</RNText>
         </View>}
         <Field label="Offer (shown to customers)" value={offer} onChangeText={setOffer} placeholder="Weekend special: 20% OFF" autoCapitalize="sentences" />
-        <Btn t="Publish" onPress={() => patch({ offer: offer.trim() || null })} />
+        <Field
+  label="Advertisement End Date (optional)"
+  value={offerEndDate}
+  onChangeText={setOfferEndDate}
+  placeholder="YYYY-MM-DD (Example: 2026-12-31)"
+/>
+        <Btn
+  t="Publish"
+  onPress={() => patch({
+    offer: offer.trim() || null,
+    offer_end_date: offerEndDate.trim() || null
+  })}
+/>
       </View>
       {lowP.length > 0 && (
-        <View style={s.card}>
+        <View style={[s.card, { backgroundColor: '#fff8e6', borderColor: '#f3dca0' }]}>
           <Text style={s.h}>⚠️ Stock alert</Text>
           {lowP.slice(0, 4).map((p) => (
             <View key={p.id} style={s.prow}>
+              <Photo url={p.image_url} name={p.name} size={40} />
               <View style={{ flex: 1 }}>
                 <RNText style={s.shopN}>{p.name}</RNText>
                 <Text
@@ -3019,8 +3672,8 @@ function OrderDetails({ o, onBack, load }) {
     ['delivered', '✔', 'Mark as Delivered', GREEN, '#fff', '#bfe3cf'],
   ].filter((b) => b[0] === 'reject' || FLOW.includes(b[0]));
   return (
-    <ScrollView>
-      <View style={[s.head, { paddingBottom: 20 }]}>
+    <ScrollView style={{ backgroundColor: BG }}>
+      <View style={[s.head, { paddingBottom: 20, backgroundColor: TEAL }]}>
         <View style={s.rowB}>
           <TouchableOpacity onPress={onBack}>
             <RNText style={{ color: '#fff', fontSize: 24 }}>←</RNText>
@@ -3028,7 +3681,7 @@ function OrderDetails({ o, onBack, load }) {
           <Tag t={STATUS[o.status] || o.status} kind={o.status === 'cancelled' ? 'r' : o.status === 'delivered' ? 'g' : 'b'} />
         </View>
         <Text style={s.headT}>Order Details</Text>
-        <RNText style={{ color: '#cfdcf7', marginTop: 2 }}>{orderNo(o)} · {when(o.created_at)}</RNText>
+        <RNText style={{ color: '#e6eeff', marginTop: 2 }}>{orderNo(o)} · {when(o.created_at)}</RNText>
       </View>
       <Msg t={err} />
 
@@ -3053,7 +3706,7 @@ function OrderDetails({ o, onBack, load }) {
       </View>
 
       {o.pay === 'upi' && (
-        <View style={s.card}>
+        <View style={[s.card, { backgroundColor: '#f3efff', borderColor: '#d8cdf3' }]}>
           <View style={s.rowB}>
             <Text style={s.h}>💳 UPI Payment</Text>
             {paid ? <Tag t="✔ Payment verified" kind="g" />
@@ -3204,15 +3857,15 @@ function SellerOrders({ os, load, selId, setSel, err0, hasMore, loadMore }) {
   if (sel) return <OrderDetails o={sel} onBack={() => setSel(null)} load={load} />;
   const list = os.filter((o) => o.status === tab);
   return (
-    <ScrollView>
-      <Head title="Seller Orders" sub="Real-time incoming orders" />
+    <ScrollView style={{ backgroundColor: BG }}>
+      <Head title="Seller Orders" sub="Real-time incoming orders" color={TEAL} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ padding: 14, paddingBottom: 4 }}>
-        {ALL_ST.map((k) => <Chip key={k} t={STATUS[k] + ' ' + os.filter((o) => o.status === k).length} on={tab === k} onPress={() => setTab(k)} />)}
+        {ALL_ST.map((k) => <Chip key={k} color={TEAL} t={STATUS[k] + ' ' + os.filter((o) => o.status === k).length} on={tab === k} onPress={() => setTab(k)} />)}
       </ScrollView>
       <Msg t={err || err0} />
       {list.length === 0 && <Text style={s.empty}>No orders in this list.</Text>}
       {list.map((o) => (
-        <TouchableOpacity key={o.id} style={s.card} onPress={() => setSel(o.id)} activeOpacity={0.85}>
+        <TouchableOpacity key={o.id} style={[s.card, { borderLeftWidth: 5, borderLeftColor: o.status === 'new' ? ORANGE : o.status === 'cancelled' ? RED : o.status === 'delivered' ? GREEN : BLUE }]} onPress={() => setSel(o.id)} activeOpacity={0.85}>
           <View style={s.rowB}>
             <Text style={s.shopN}>{orderNo(o)}</Text>
             {o.status === 'new' ? <Tag t={'⏱ ' + minsLeft(o.created_at) + ' min left'} kind="y" /> : <Tag t={STATUS[o.status] || o.status} kind={o.status === 'cancelled' ? 'r' : 'b'} />}
@@ -3221,7 +3874,7 @@ function SellerOrders({ os, load, selId, setSel, err0, hasMore, loadMore }) {
           <RNText style={s.sub}>{o.pickup ? '🏪 ' + trs('Pickup') : '📍 ' + o.address}</RNText>
           <View style={[s.rowB, { marginTop: 8 }]}>
             <RNText
-              style={s.sub}>{(o.order_items || []).length + ' ' + trs('Items')} · {when(o.created_at)} · {o.pay === 'upi' ? 'UPI' : 'COD'}</RNText>
+              style={s.sub}>{(o.order_items || []).length + ' ' + trs('Items')} · {when(o.created_at)} · {o.pay === 'upi' ? 'UPI' : o.pay === 'khata' ? 'Khata' : 'COD'}</RNText>
             <RNText style={[s.price, { color: GREEN }]}>{money(o.total)}</RNText>
           </View>
           {o.pay === 'upi' && (
@@ -3243,13 +3896,17 @@ function SellerOrders({ os, load, selId, setSel, err0, hasMore, loadMore }) {
     </ScrollView>
   );
 }
-
-// ---------- Seller: product add / edit sheet (seller_save_product + update_shop_product_stock) ----------
-function ProductForm({ shop, product, onClose, onDone }) {
+// ---------- Seller: product add / edit sheet ----------
+// product photo is uploaded from the gallery (no photo link). Buyers see this photo.
+// When the seller picks a main category that the shop does not sell yet, it is added to the shop categories,
+// so the shop automatically shows up under that category for buyers.
+function ProductForm({ shop, setShop, product, onClose, onDone }) {
   const p = product;
   const [f, setF] = useState({
     name: p ? p.name : '', cat: p && p.category ? p.category : PROD_CATS[0], unit: p ? p.unit : 'kg',
     price: p ? num(Number(p.price)) : '', op: p && p.original_price ? num(Number(p.original_price)) : '',
+    discount: p && p.discount_percent ? String(p.discount_percent) : '',
+offerUntil: p && p.offer_expires_at ? String(p.offer_expires_at).slice(0, 10) : '',
     oq: p ? num(Number(p.online_qty)) : '', sq: p ? num(Number(p.shop_qty || 0)) : '',
     low: p && p.low_alert ? num(Number(p.low_alert)) : '5',
     desc: p && p.description ? p.description : '',
@@ -3257,18 +3914,47 @@ function ProductForm({ shop, product, onClose, onDone }) {
   });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pbusy, setPbusy] = useState(false);
   const set = (k) => (v) => setF({ ...f, [k]: v });
+  const pickPhoto = async () => {
+    setPbusy(true); setMsg('');
+    try { const d = await pickProductPhoto(); if (d) setF((x) => ({ ...x, img: d })); }
+    catch (e) { setMsg(e.message || 'Could not open the gallery'); }
+    setPbusy(false);
+  };
   const save = async () => {
     if (busy) return;
     const price = Number(f.price), oq = parseFloat(f.oq), sq = parseFloat(f.sq) || 0;
     const op = f.op ? Number(f.op) : 0;
+    const discount = f.discount ? Number(f.discount) : 0;
+const offerUntil = f.offerUntil.trim();
+
+if (!Number.isFinite(discount) || discount < 0 || discount > 90) {
+  setMsg('Discount must be between 1 and 90 percent.');
+  return;
+}
+
+if (discount > 0) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(offerUntil)) {
+    setMsg('Enter offer expiry date in YYYY-MM-DD format.');
+    return;
+  }
+
+  const expiry = new Date(offerUntil + 'T23:59:59');
+  if (isNaN(expiry.getTime()) || expiry <= new Date()) {
+    setMsg('Offer expiry date must be in the future.');
+    return;
+  }
+}
     if (!f.name.trim() || !(price > 0) || isNaN(oq) || oq < 0) { setMsg('Enter name, price and online stock'); return; }
     if (f.op && (isNaN(op) || op < price)) { setMsg('Original price must be equal to or higher than the price'); return; }
     const prod = {
       name: f.name.trim(), category: f.cat, unit: f.unit, price,
       original_price: op > 0 ? op : null,
+      discount_percent: discount,
+offer_expires_at: discount > 0 ? offerUntil : null,
       description: f.desc.trim() || null,
-      image_url: f.img.trim() || null,
+      image_url: f.img || null,
       low_alert: parseFloat(f.low) > 0 ? parseFloat(f.low) : 5,
       active: p ? p.active !== false : true,
     };
@@ -3288,7 +3974,16 @@ function ProductForm({ shop, product, onClose, onDone }) {
           throw e2;
         }
       }
-      onDone(p ? '✅ Saved' : '✅ Product added');
+      // make the shop visible under this category for buyers
+      let note = '';
+      if (SHOP_CATS.includes(f.cat) && !shopCats(shop).includes(f.cat)) {
+        try {
+          const nc = [...shopCats(shop), f.cat].join(',');
+          await newRpc('update_my_shop_categories', { p_shop_id: shop.id, p_category: nc });
+          if (setShop) setShop({ ...shop, category: nc });
+        } catch (e3) { note = ' (category could not be added to the shop: ' + errMsg(e3) + ')'; }
+      }
+      onDone((p ? '✅ Saved' : '✅ Product added') + note);
     } catch (e) { setMsg(errMsg(e)); }
     setBusy(false);
   };
@@ -3301,20 +3996,36 @@ function ProductForm({ shop, product, onClose, onDone }) {
         </TouchableOpacity>
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 460 }}>
+        <Text style={s.label}>Product photo</Text>
+        <PhotoPicker url={f.img} name={f.name || 'P'} size={90} onPick={pickPhoto} busy={pbusy}
+          label="Upload product photo" onRemove={() => setF({ ...f, img: '' })} />
         <Field label="Name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
         <Text style={s.label}>Category</Text>
         <View
-          style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} onPress={() => set('cat')(c)} />)}</View>
+          style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => set('cat')(c)} />)}</View>
         <Text style={s.label}>Unit (how you sell it)</Text>
         <View
           style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{UNITS.map((u) => <Chip key={u} t={u} on={f.unit === u} onPress={() => set('unit')(u)} />)}</View>
         <Field label={'Price (₹ per ' + unitLabel(f.unit) + ')'} value={f.price} onChangeText={set('price')} keyboardType="decimal-pad" />
         <Field label="Original price (₹, optional)" value={f.op} onChangeText={set('op')} keyboardType="decimal-pad" />
+        <Field
+  label="Offer Discount (%)"
+  value={f.discount}
+  onChangeText={set('discount')}
+  keyboardType="number-pad"
+  placeholder="Example: 20"
+/>
+
+<Field
+  label="Offer Last Date (YYYY-MM-DD)"
+  value={f.offerUntil}
+  onChangeText={set('offerUntil')}
+  placeholder="Example: 2026-12-31"
+/>
         <Field label={'Online stock (' + unitLabel(f.unit) + ')'} value={f.oq} onChangeText={set('oq')} keyboardType="decimal-pad" />
         <Field label={'Shop stock (' + unitLabel(f.unit) + ', counter only)'} value={f.sq} onChangeText={set('sq')} keyboardType="decimal-pad" />
         <Field label="Low stock alert at" value={f.low} onChangeText={set('low')} keyboardType="decimal-pad" />
         <Field label="Description (optional)" value={f.desc} onChangeText={set('desc')} multiline autoCapitalize="sentences" />
-        <Field label="Photo link (optional)" value={f.img} onChangeText={set('img')} placeholder="https://..." />
       </ScrollView>
       <Msg t={msg} />
       <View style={{ height: 8 }} />
@@ -3325,7 +4036,7 @@ function ProductForm({ shop, product, onClose, onDone }) {
 }
 
 // ---------- Seller: products table ----------
-function SellerProducts({ shop, products, reloadP, addOpen, setAddOpen, perr }) {
+function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen, perr }) {
   const [q, setQ] = useState('');
   const [fl, setFl] = useState('all');
   const [showF, setShowF] = useState(false);
@@ -3354,11 +4065,12 @@ function SellerProducts({ shop, products, reloadP, addOpen, setAddOpen, perr }) 
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView keyboardShouldPersistTaps="handled">
+      <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
         <Head
           title="All Products"
+          color={PURPLE}
           sub={products.length + ' products in total'}
-          right={<Btn small t="+ Add Product" onPress={() => { setEdit(null); setAddOpen(true); }} />}
+          right={<Btn small kind="w" t="+ Add Product" onPress={() => { setEdit(null); setAddOpen(true); }} />}
         />
         <Msg t={msg} ok={msg.startsWith('✅')} />
         <Msg t={perr} />
@@ -3376,7 +4088,7 @@ function SellerProducts({ shop, products, reloadP, addOpen, setAddOpen, perr }) 
           {showF && (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
               {[['all', 'All'], ['in', 'In stock'], ['low', 'Low stock'], ['out', 'Out of stock'], ['inactive', 'Inactive']].map(([k, t]) => (
-                <Chip key={k} t={t} on={fl === k} onPress={() => setFl(k)} />
+                <Chip key={k} t={t} on={fl === k} onPress={() => setFl(k)} color={PURPLE} />
               ))}
             </View>
           )}
@@ -3395,7 +4107,7 @@ function SellerProducts({ shop, products, reloadP, addOpen, setAddOpen, perr }) 
             return (
               <TouchableOpacity key={p.id} style={[s.trow, st === 'inactive' && { opacity: 0.6 }]} onPress={() => setEdit(p)} onLongPress={() => menu(p)} activeOpacity={0.8}>
                 <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Photo url={p.image_url} name={p.name} size={36} />
+                  <Photo url={p.image_url} name={p.name} size={44} />
                   <View style={{ flex: 1 }}>
                     <RNText style={s.shopN} numberOfLines={1}>{p.name}</RNText>
                     <RNText style={s.sub} numberOfLines={1}>{p.category || ''}</RNText>
@@ -3426,6 +4138,7 @@ function SellerProducts({ shop, products, reloadP, addOpen, setAddOpen, perr }) 
       {(addOpen || edit) && (
         <ProductForm
           shop={shop}
+          setShop={setShop}
           product={edit}
           onClose={() => { setEdit(null); setAddOpen(false); }}
           onDone={done}
@@ -3501,15 +4214,424 @@ function PaymentSheet({ shop, initial, onClose, onSaved }) {
   );
 }
 
-// ---------- Seller: More tab = seller profile (new design, same flow) ----------
-function SellerMore({ shop, setShop, lang, onLang, onLogout }) {
+// ======================================================================
+// SELLER: More-tab sub pages (all real pages, each with its own colour)
+// ======================================================================
+function SubHead({ title, sub, color, onBack, right }) {
+  return <Head title={title} sub={sub} color={color} onBack={onBack} right={right} />;
+}
+
+// ---- Manage Your Shop: photo, details, categories ----
+function SellerManage({ shop, setShop, onBack }) {
+  const [busy, setBusy] = useState(false);
+  const [cbusy, setCbusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [cats, setCats] = useState(shopCats(shop));
+  const changePhoto = async () => {
+    setMsg(''); setBusy(true);
+    try {
+      const d = await pickShopPhoto();
+      if (d) {
+        await newRpc('update_my_shop_photo', { p_shop_id: shop.id, p_photo_url: d });
+        setShop({ ...shop, photo_url: d }); setMsg('✅ Shop photo saved');
+      }
+    } catch (e) { setMsg(errMsg(e)); }
+    setBusy(false);
+  };
+  const removePhoto = async () => {
+    setMsg(''); setBusy(true);
+    try {
+      await newRpc('update_my_shop_photo', { p_shop_id: shop.id, p_photo_url: null });
+      setShop({ ...shop, photo_url: null }); setMsg('✅ Shop photo removed');
+    } catch (e) { setMsg(errMsg(e)); }
+    setBusy(false);
+  };
+  const toggle = (c) => {
+    const has = cats.includes(c);
+    if (has && cats.length === 1) return;
+    setCats(has ? cats.filter((x) => x !== c) : [...cats, c]);
+  };
+  const saveCats = async () => {
+    setCbusy(true); setMsg('');
+    try {
+      const v = cats.join(',');
+      await newRpc('update_my_shop_categories', { p_shop_id: shop.id, p_category: v });
+      setShop({ ...shop, category: v }); setMsg('✅ Categories saved');
+    } catch (e) { setMsg(errMsg(e)); }
+    setCbusy(false);
+  };
+  const row = (k, v) => (
+    <View style={[s.rowB, { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: LINE }]}>
+      <Text style={s.sub}>{k}</Text>
+      <RNText style={{ color: INK, fontWeight: '700', flexShrink: 1, textAlign: 'right' }}>{v || '—'}</RNText>
+    </View>
+  );
+  return (
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+      <SubHead title="Manage Your Shop" sub="Photo, details and categories" color={BLUE} onBack={onBack} />
+      <Msg t={msg} ok={msg.startsWith('✅')} />
+      <View style={s.card}>
+        <Text style={s.h}>📷 Shop profile photo</Text>
+        <PhotoPicker url={shop.photo_url} name={shop.name} size={100} round onPick={changePhoto} busy={busy}
+          label="Upload shop photo" onRemove={removePhoto} />
+        <Text style={s.sub}>This photo is shown to every buyer on your shop card and shop page.</Text>
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>🏪 Shop details</Text>
+        {row('Shop name', shop.name)}
+        {row('Owner', shop.owner_name)}
+        {row('Phone', shop.phone)}
+        {row('Area', shop.area)}
+        {row('Status', shop.is_open ? 'Open' : 'Closed')}
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>🗂️ Categories you sell</Text>
+        <Text style={[s.sub, { marginBottom: 8 }]}>Select all types of products you sell. Buyers will find your shop under each of them.</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {SHOP_CATS.map((c) => <Chip key={c} t={catMeta(c).ic + ' ' + c} on={cats.includes(c)} color={PURPLE} onPress={() => toggle(c)} />)}
+        </View>
+        <Btn t={cbusy ? 'Please wait...' : 'Save'} onPress={saveCats} disabled={cbusy} style={{ marginTop: 6 }} />
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Business Hours (opening hours are kept on this phone, open/closed switch is live) ----
+function SellerHours({ shop, setShop, onBack }) {
+  const key = 'hours_' + shop.id;
+  const [h, setH] = useState({ open: '09:00 AM', close: '09:00 PM', off: [] });
+  const [msg, setMsg] = useState('');
+  useEffect(() => { store.get(key).then((v) => { if (v) { try { setH(JSON.parse(v)); } catch (e) {} } }); }, [key]);
+  const toggleDay = (d) => setH({ ...h, off: h.off.includes(d) ? h.off.filter((x) => x !== d) : [...h.off, d] });
+  const save = async () => { await store.set(key, JSON.stringify(h)); setMsg('✅ Saved'); };
+  const flip = async () => {
+    try { await patchShop(shop, setShop, { is_open: !shop.is_open }); setMsg('✅ Saved'); } catch (e) { setMsg(errMsg(e)); }
+  };
+  return (
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+      <SubHead title="Business Hours" sub="Set open hours and holidays" color={AMBER} onBack={onBack} />
+      <Msg t={msg} ok={msg.startsWith('✅')} />
+      <View style={[s.card, { backgroundColor: shop.is_open ? '#eefaf2' : '#fdecef' }]}>
+        <View style={s.rowB}>
+          <View>
+            <Text style={s.h}>{shop.is_open ? '● Open' : '● Closed'}</Text>
+            <Text style={s.sub}>Customers can order only when the shop is open</Text>
+          </View>
+          <Btn small kind={shop.is_open ? 'r' : 'g'} t={shop.is_open ? 'Close shop' : 'Open shop'} onPress={flip} />
+        </View>
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>🕒 Daily timing</Text>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <View style={{ flex: 1 }}><Field label="Opens at" value={h.open} onChangeText={(v) => setH({ ...h, open: v })} /></View>
+          <View style={{ flex: 1 }}><Field label="Closes at" value={h.close} onChangeText={(v) => setH({ ...h, close: v })} /></View>
+        </View>
+        <Text style={s.label}>Weekly holiday (tap the days your shop is closed)</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {DAYS.map((d) => <Chip key={d} t={d} on={h.off.includes(d)} color={RED} onPress={() => toggleDay(d)} />)}
+        </View>
+        <Btn t="Save" onPress={save} style={{ marginTop: 6 }} />
+        <Text style={[s.sub, { marginTop: 8 }]}>Hours and holidays are saved on this phone. The Open / Closed switch above is live for buyers.</Text>
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Delivery and Pickup (kept on this phone) ----
+function SellerDelivery({ shop, onBack }) {
+  const key = 'delivery_' + shop.id;
+  const [d, setD] = useState({ delivery: true, pickup: true, radius: '5', min: '0' });
+  const [msg, setMsg] = useState('');
+  useEffect(() => { store.get(key).then((v) => { if (v) { try { setD(JSON.parse(v)); } catch (e) {} } }); }, [key]);
+  const save = async () => { await store.set(key, JSON.stringify(d)); setMsg('✅ Saved'); };
+  return (
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+      <SubHead title="Delivery and Pickup" sub="Manage delivery zones and pickup options" color={GREEN} onBack={onBack} />
+      <Msg t={msg} ok />
+      <View style={s.card}>
+        <View style={s.rowB}>
+          <View><Text style={s.shopN}>🛵 Home delivery</Text><Text style={s.sub}>Deliver orders to the customer's home</Text></View>
+          <Switch value={d.delivery} onValueChange={(v) => setD({ ...d, delivery: v })} trackColor={{ true: GREEN }} />
+        </View>
+        <View style={[s.rowB, { marginTop: 16 }]}>
+          <View><Text style={s.shopN}>🏪 Pickup from shop</Text><Text style={s.sub}>Customer collects the order at your shop</Text></View>
+          <Switch value={d.pickup} onValueChange={(v) => setD({ ...d, pickup: v })} trackColor={{ true: GREEN }} />
+        </View>
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>📍 Delivery zone</Text>
+        <Field label="Delivery radius (km)" value={d.radius} onChangeText={(v) => setD({ ...d, radius: v })} keyboardType="decimal-pad" />
+        <Field label="Minimum order (₹)" value={d.min} onChangeText={(v) => setD({ ...d, min: v })} keyboardType="decimal-pad" />
+        <Btn kind="g" t="Save" onPress={save} />
+        <Text style={[s.sub, { marginTop: 8 }]}>These settings are saved on this phone and help you plan. Delivery charge stays free for now.</Text>
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Categories overview ----
+function SellerCategories({ shop, products, onBack, onManage }) {
+  const mine = shopCats(shop);
+  const count = (c) => products.filter((p) => p.category === c).length;
+  const extra = Array.from(new Set(products.map((p) => p.category).filter((c) => c && !SHOP_CATS.includes(c))));
+  return (
+    <ScrollView style={{ backgroundColor: BG }}>
+      <SubHead title="Categories" sub="Manage your product categories" color={PURPLE} onBack={onBack} />
+      <View style={s.card}>
+        <View style={s.rowB}><Text style={s.h}>Shop categories</Text><Btn small kind="o" t="Edit" onPress={onManage} /></View>
+        <Text style={[s.sub, { marginBottom: 8 }]}>Buyers find your shop under these categories.</Text>
+        {mine.map((c) => (
+          <View key={c} style={[s.prow, { backgroundColor: catMeta(c).bg, borderRadius: 14, paddingHorizontal: 10, marginBottom: 8 }]}>
+            <RNText style={{ fontSize: 26 }}>{catMeta(c).ic}</RNText>
+            <View style={{ flex: 1 }}><Text style={s.shopN}>{c}</Text></View>
+            <Tag t={count(c) + ' products'} kind="p" />
+          </View>
+        ))}
+      </View>
+      {extra.length > 0 && (
+        <View style={s.card}>
+          <Text style={s.h}>Product types</Text>
+          {extra.map((c) => (
+            <View key={c} style={[s.rowB, { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: LINE }]}>
+              <Text style={s.shopN}>{c}</Text><Tag t={count(c) + ' products'} kind="b" />
+            </View>
+          ))}
+        </View>
+      )}
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Inventory ----
+function SellerInventory({ shop, products, reloadP, onBack }) {
+  const [msg, setMsg] = useState('');
+  const act = products.filter((p) => p.active !== false);
+  const out = act.filter((p) => Number(p.online_qty) <= 0);
+  const low = act.filter((p) => Number(p.online_qty) > 0 && Number(p.online_qty) <= Number(p.low_alert || 5));
+  const ok = act.length - out.length - low.length;
+  const plus = async (p) => { const m = await bumpStock(shop, p, reloadP); setMsg(m || '✅ Saved'); };
+  const need = [...out, ...low];
+  return (
+    <ScrollView style={{ backgroundColor: BG }}>
+      <SubHead title="Inventory" sub="Track stock and manage inventory" color={TEAL} onBack={onBack} />
+      <Msg t={msg} ok={msg.startsWith('✅')} />
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', padding: 14, paddingBottom: 4 }}>
+        <StatTile ic="📦" v={act.length} label="Active products" bg="#e3ecff" />
+        <StatTile ic="✅" v={ok} label="In stock" bg="#dcf5e1" />
+        <StatTile ic="⚠️" v={low.length} label="Low stock" bg="#fff3c4" />
+        <StatTile ic="⛔" v={out.length} label="Out of stock" bg="#fbe0db" />
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>Needs restock</Text>
+        {need.length === 0 && <Text style={s.sub}>All products have enough stock.</Text>}
+        {need.map((p) => (
+          <View key={p.id} style={s.prow}>
+            <Photo url={p.image_url} name={p.name} size={44} />
+            <View style={{ flex: 1 }}>
+              <RNText style={s.shopN}>{p.name}</RNText>
+              <Text style={s.sub}>{Number(p.online_qty) <= 0 ? 'Out of stock' : 'Only ' + qtyLabel(Number(p.online_qty), p.unit) + ' left'}</Text>
+            </View>
+            <Btn small t="+10" onPress={() => plus(p)} />
+          </View>
+        ))}
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>All stock</Text>
+        {act.map((p) => (
+          <View key={p.id} style={[s.rowB, { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: LINE }]}>
+            <RNText style={[s.shopN, { flex: 1 }]} numberOfLines={1}>{p.name}</RNText>
+            <RNText style={s.sub}>{'Online ' + qtyLabel(Number(p.online_qty), p.unit) + ' · Shop ' + qtyLabel(Number(p.shop_qty || 0), p.unit)}</RNText>
+          </View>
+        ))}
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Deals and Offers ----
+function SellerDeals({ shop, setShop, onBack }) {
+  const [offer, setOffer] = useState(shop.offer || '');
+  const [msg, setMsg] = useState('');
+  const SAMPLES = ['Weekend special: 20% OFF', 'Free delivery above ₹300', 'Buy 1 Get 1 on snacks', 'Fresh vegetables - 10% OFF'];
+  const save = async (v) => {
+    try { await patchShop(shop, setShop, { offer: v }); setMsg('✅ Saved'); if (!v) setOffer(''); } catch (e) { setMsg(errMsg(e)); }
+  };
+  return (
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+      <SubHead title="Deals and Offers" sub="Create and manage deals and discounts" color={PINK} onBack={onBack} />
+      <Msg t={msg} ok={msg.startsWith('✅')} />
+      {!!shop.offer && (
+        <View style={[s.adBox, { marginHorizontal: 14, marginTop: 12, backgroundColor: PINK }]}>
+          <RNText style={{ color: '#ffd6e4', fontSize: 12, fontWeight: '700' }}>LIVE NOW</RNText>
+          <RNText style={{ color: '#fff', fontWeight: '800', fontSize: 18, marginTop: 4 }}>{shop.offer}</RNText>
+        </View>
+      )}
+      <View style={s.card}>
+        <Text style={s.h}>🎁 New offer</Text>
+        <Field label="Offer (shown to customers)" value={offer} onChangeText={setOffer} placeholder="Weekend special: 20% OFF" autoCapitalize="sentences" />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {SAMPLES.map((x) => <Chip key={x} t={x} on={offer === x} color={PINK} onPress={() => setOffer(x)} />)}
+        </View>
+        <Btn t="Publish" onPress={() => save(offer.trim() || null)} style={{ marginTop: 6, backgroundColor: PINK }} />
+        {!!shop.offer && <Btn kind="r" t="Remove offer" onPress={() => save(null)} style={{ marginTop: 8 }} />}
+        <Text style={[s.sub, { marginTop: 8 }]}>Your offer appears on the buyer home banner, shop page and in buyer notifications.</Text>
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Sales Report (calculated from the shop orders) ----
+function SellerSales({ os, onBack }) {
+  const ok = os.filter((o) => o.status !== 'cancelled');
+  const today = new Date().toDateString();
+  const sum = (l) => l.reduce((t, o) => t + Number(o.total || 0), 0);
+  const tdy = ok.filter((o) => new Date(o.created_at).toDateString() === today);
+  const delivered = os.filter((o) => o.status === 'delivered');
+  const upi = ok.filter((o) => o.pay === 'upi');
+  const cod = ok.filter((o) => o.pay !== 'upi' && o.pay !== 'khata');
+  const khataOrders = ok.filter((o) => o.pay === 'khata');
+  const byProd = {};
+  ok.forEach((o) => (o.order_items || []).forEach((i) => {
+    const k = i.name || 'Item';
+    byProd[k] = byProd[k] || { n: 0, amt: 0 };
+    byProd[k].n += 1; byProd[k].amt += Number(i.price) * Number(i.qty);
+  }));
+  const top = Object.keys(byProd).map((k) => ({ k, ...byProd[k] })).sort((a, b) => b.amt - a.amt).slice(0, 5);
+  const maxAmt = top.length ? top[0].amt : 1;
+  return (
+    <ScrollView style={{ backgroundColor: BG }}>
+      <SubHead title="Sales Report" sub={'Based on your latest ' + os.length + ' orders'} color={GREEN} onBack={onBack} />
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', padding: 14, paddingBottom: 4 }}>
+        <StatTile ic="💰" v={money(sum(tdy))} label="Today's sales" bg="#dcf5e1" fg={GREEN} />
+        <StatTile ic="📈" v={money(sum(ok))} label="Total sales" bg="#e3ecff" fg={BLUE} />
+        <StatTile ic="🧾" v={ok.length} label="Orders (not cancelled)" bg="#fff0d6" />
+        <StatTile ic="🎉" v={delivered.length} label="Delivered" bg="#e6e8ff" />
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>Payment methods</Text>
+        <View style={[s.rowB, { paddingVertical: 6 }]}><Text style={s.shopN}>💳 UPI</Text><Text style={s.price}>{upi.length + ' · ' + money(sum(upi))}</Text></View>
+        <View style={[s.rowB, { paddingVertical: 6 }]}><Text style={s.shopN}>💵 Cash on Delivery</Text><Text style={s.price}>{cod.length + ' · ' + money(sum(cod))}</Text></View>
+        <View style={[s.rowB, { paddingVertical: 6 }]}><Text style={s.shopN}>📒 Khata (Udhaar)</Text><Text style={s.price}>{khataOrders.length + ' · ' + money(sum(khataOrders))}</Text></View>
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>🏆 Top selling products</Text>
+        {top.length === 0 && <Text style={s.sub}>No sales yet.</Text>}
+        {top.map((t) => (
+          <View key={t.k} style={{ marginBottom: 10 }}>
+            <View style={s.rowB}><RNText style={s.shopN} numberOfLines={1}>{t.k}</RNText><RNText style={s.price}>{money(t.amt)}</RNText></View>
+            <View style={{ height: 8, borderRadius: 4, backgroundColor: '#e8eef9', marginTop: 4 }}>
+              <View style={{ height: 8, borderRadius: 4, backgroundColor: GREEN, width: Math.max(6, Math.round((t.amt / maxAmt) * 100)) + '%' }} />
+            </View>
+          </View>
+        ))}
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>Orders by status</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {ALL_ST.map((k) => <Tag key={k} t={STATUS[k] + ': ' + os.filter((o) => o.status === k).length} kind={k === 'cancelled' ? 'r' : k === 'delivered' ? 'g' : 'b'} />)}
+        </View>
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Customers Reviews ----
+function SellerReviews({ shop, onBack }) {
+  const rv = useShopReviews(shop.id, 0);
+  const avg = avgRating(rv.list);
+  const dist = [5, 4, 3, 2, 1].map((n) => ({ n, c: rv.list.filter((r) => Number(r.rating) === n).length }));
+  return (
+    <ScrollView style={{ backgroundColor: BG }}>
+      <SubHead title="Customers Reviews" sub="What your customers say" color={AMBER} onBack={onBack} />
+      <View style={[s.card, { alignItems: 'center', backgroundColor: '#fff8e6', borderColor: '#f3dca0' }]}>
+        <RNText style={{ fontSize: 44, fontWeight: '800', color: INK }}>{rv.list.length ? avg : '—'}</RNText>
+        <Stars v={avg} size={26} />
+        <Text style={[s.sub, { marginTop: 4 }]}>{rv.list.length + ' reviews'}</Text>
+      </View>
+      {rv.list.length > 0 && (
+        <View style={s.card}>
+          {dist.map((d) => (
+            <View key={d.n} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <RNText style={{ width: 24, color: INK, fontWeight: '700' }}>{d.n + '★'}</RNText>
+              <View style={{ flex: 1, height: 8, borderRadius: 4, backgroundColor: '#e8eef9' }}>
+                <View style={{ height: 8, borderRadius: 4, backgroundColor: GOLD, width: (rv.list.length ? (d.c / rv.list.length) * 100 : 0) + '%' }} />
+              </View>
+              <RNText style={[s.sub, { width: 22, textAlign: 'right' }]}>{d.c}</RNText>
+            </View>
+          ))}
+        </View>
+      )}
+      <Msg t={rv.err} />
+      {rv.loading && <ActivityIndicator color={BLUE} style={{ margin: 20 }} />}
+      {!rv.loading && rv.list.length === 0 && <Text style={s.empty}>No reviews yet.</Text>}
+      {rv.list.map((r, i) => (
+        <View key={i} style={s.card}>
+          <View style={s.rowB}>
+            <RNText style={s.shopN}>{r.customer_name || 'Customer'}</RNText>
+            <RNText style={s.sub}>{r.created_at ? when(r.created_at) : ''}</RNText>
+          </View>
+          <Stars v={Number(r.rating)} size={16} />
+          {!!r.comment && <RNText style={{ color: INK, marginTop: 6 }}>{r.comment}</RNText>}
+        </View>
+      ))}
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---- Seller notifications: new orders, low stock, vibration alert ----
+function SellerNotifications({ os, products, vib, setVib, openOrder, goInventory, onBack }) {
+  const fresh = os.filter((o) => o.status === 'new');
+  const lowP = products.filter((p) => p.active !== false && Number(p.online_qty) <= Number(p.low_alert || 5));
+  return (
+    <ScrollView style={{ backgroundColor: BG }}>
+      <SubHead title="Notification" sub="New orders and alerts" color={PINK} onBack={onBack} />
+      <View style={[s.card, s.rowB]}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.shopN}>📳 New order alert (vibration)</Text>
+          <Text style={s.sub}>Phone vibrates when a new order arrives</Text>
+        </View>
+        <Switch value={vib} onValueChange={setVib} trackColor={{ true: PINK }} />
+      </View>
+      <Text style={[s.h, s.sec]}>🛍️ New orders ({fresh.length})</Text>
+      {fresh.length === 0 && <Text style={[s.sub, { marginHorizontal: 14 }]}>No new orders right now.</Text>}
+      {fresh.map((o) => (
+        <NoteCard key={o.id} ic="🔔" bg="#fff3e3"
+          title={'New order ' + orderNo(o) + ' · ' + money(o.total)}
+          text={o.customer_name + ' · ' + (o.order_items || []).length + ' items · ' + (o.pay === 'upi' ? 'UPI' : o.pay === 'khata' ? 'Khata' : 'COD')}
+          time={when(o.created_at) + ' · ' + minsLeft(o.created_at) + ' min left to respond'}
+          onPress={() => openOrder(o.id)}
+          right={<Btn small t="Open" onPress={() => openOrder(o.id)} />} />
+      ))}
+      <Text style={[s.h, s.sec]}>⚠️ Stock alerts ({lowP.length})</Text>
+      {lowP.length === 0 && <Text style={[s.sub, { marginHorizontal: 14 }]}>All products have enough stock.</Text>}
+      {lowP.slice(0, 8).map((p) => (
+        <NoteCard key={p.id} ic="📦" bg="#fff8e6" title={p.name}
+          text={Number(p.online_qty) <= 0 ? 'Out of stock' : 'Only ' + qtyLabel(Number(p.online_qty), p.unit) + ' left'}
+          onPress={goInventory} right={<Photo url={p.image_url} name={p.name} size={44} />} />
+      ))}
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+// ---------- Seller: More tab = seller profile ----------
+function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloadP, page, setPage, openOrder }) {
   const [vib, setVib] = useState(PREF.vib);
   const [payOpen, setPayOpen] = useState(false);
   const [pay, setPay] = useState({ upi_id: shop.upi_id || null, qr_url: shop.qr_url || null });
   const [pmsg, setPmsg] = useState('');
-  const soon = (t) => Alert.alert(trs(t), trs('Coming soon'));
+  const [pbusy, setPbusy] = useState(false);
   const toggleVib = (v) => { PREF.vib = v; setVib(v); };
   const langName = (LANGS.find((l) => l[0] === lang) || LANGS[0])[1];
+  const newCount = os.filter((o) => o.status === 'new').length;
 
   // load the saved UPI ID / QR code of this shop
   useEffect(() => {
@@ -3528,17 +4650,50 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout }) {
     setPay(p); setPayOpen(false); setPmsg('✅ Saved');
     if (setShop) setShop({ ...shop, upi_id: p.upi_id, qr_url: p.qr_url });
   };
+  const changePhoto = async () => {
+    setPmsg(''); setPbusy(true);
+    try {
+      const d = await pickShopPhoto();
+      if (d) {
+        await newRpc('update_my_shop_photo', { p_shop_id: shop.id, p_photo_url: d });
+        setShop({ ...shop, photo_url: d }); setPmsg('✅ Shop photo saved');
+      }
+    } catch (e) { setPmsg(errMsg(e)); }
+    setPbusy(false);
+  };
+  const back = () => setPage(null);
+
+  if (page === 'manage') return <SellerManage shop={shop} setShop={setShop} onBack={back} />;
+  if (page === 'hours') return <SellerHours shop={shop} setShop={setShop} onBack={back} />;
+  if (page === 'delivery') return <SellerDelivery shop={shop} onBack={back} />;
+  if (page === 'khata') return <SellerKhata shop={shop} onBack={back} />;
+  if (page === 'fees') return <SellerFees shop={shop} onBack={back} />;
+  if (page === 'cats') return <SellerCategories shop={shop} products={products} onBack={back} onManage={() => setPage('manage')} />;
+  if (page === 'inventory') return <SellerInventory shop={shop} products={products} reloadP={reloadP} onBack={back} />;
+  if (page === 'deals') return <SellerDeals shop={shop} setShop={setShop} onBack={back} />;
+  if (page === 'sales') return <SellerSales os={os} onBack={back} />;
+  if (page === 'reviews') return <SellerReviews shop={shop} onBack={back} />;
+  if (page === 'support') return <SupportPage onBack={back} color={TEAL} />;
+  if (page === 'notif') {
+    return <SellerNotifications os={os} products={products} vib={vib} setVib={toggleVib}
+      openOrder={openOrder} goInventory={() => setPage('inventory')} onBack={back} />;
+  }
+
   return (
     <ScrollView style={{ backgroundColor: BG }}>
       {/* hero */}
       <View style={[s.head, { paddingBottom: 70, alignItems: 'center' }]}>
-        <View style={{ borderWidth: 3, borderColor: LIME, borderRadius: 45, padding: 2 }}>
-          <Photo url={shop.photo_url} name={shop.name} size={80} round />
-        </View>
+        <TouchableOpacity onPress={changePhoto} activeOpacity={0.85} disabled={pbusy}>
+          <View style={{ borderWidth: 3, borderColor: LIME, borderRadius: 45, padding: 2 }}>
+            <Photo url={shop.photo_url} name={shop.name} size={80} round />
+          </View>
+          <View style={[s.camBadge, { right: 0, bottom: 0 }]}><RNText style={{ fontSize: 14 }}>{pbusy ? '⏳' : '📷'}</RNText></View>
+        </TouchableOpacity>
         <RNText style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 12 }} numberOfLines={1}>
           {shop.name + ' ✔'}
         </RNText>
-        <RNText style={{ color: '#cfdcf7', marginTop: 4 }} numberOfLines={1}>{shop.category + ' · ' + shop.area}</RNText>
+        <RNText style={{ color: '#cfdcf7', marginTop: 4 }} numberOfLines={1}>{catLabel(shop) + ' · ' + shop.area}</RNText>
+        <RNText style={{ color: '#cfdcf7', marginTop: 4, fontSize: 12 }}>Tap the photo to change shop photo</RNText>
         <View style={[s.pill, { backgroundColor: shop.is_open ? '#dcf5e1' : '#fbe0db', marginTop: 10 }]}>
           <Text style={{ fontWeight: '800', color: shop.is_open ? '#0a6b3f' : '#9a2314' }}>{shop.is_open ? '● Open' : '● Closed'}</Text>
         </View>
@@ -3546,6 +4701,7 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout }) {
 
       {/* payment account card (overlapping the hero) */}
       <View style={[s.card, { marginTop: -48, padding: 18 }]}>
+        <Msg t={pmsg} ok={pmsg.startsWith('✅')} />
         <View style={s.rowB}>
           <Text style={s.h}>Payment Account</Text>
           <Tag t={hasPay ? 'Published' : 'Empty'} kind={hasPay ? 'g' : 'y'} />
@@ -3564,7 +4720,6 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout }) {
             <Text style={[s.sub, { marginTop: 6 }]}>Customers pay you directly and send the UTR number.</Text>
           </View>
         </View>
-        <Msg t={pmsg} ok={pmsg.startsWith('✅')} />
         <View style={{ height: 10 }} />
         <Btn t={hasPay ? 'Edit UPI ID & QR code' : 'Add UPI ID & QR code'} onPress={() => { setPmsg(''); setPayOpen(true); }}
           style={{ minHeight: 48 }} />
@@ -3572,28 +4727,30 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout }) {
 
       <Text style={[s.h, { marginHorizontal: 14, marginTop: 14, marginBottom: 0 }]}>Shop Management</Text>
       <View style={[s.card, { padding: 0, overflow: 'hidden' }]}>
-        <MenuRow ic="🏪" bg="#e3ecff" title="Manage Your Shop" sub="Update shop details, address, and information" onPress={() => soon('Manage Your Shop')} />
-        <MenuRow ic="🕒" bg="#fff0d6" title="Business Hours" sub="Set open hours and holidays" onPress={() => soon('Business Hours')} />
-        <MenuRow ic="🚚" bg="#d9f8ec" title="Delivery and Pickup" sub="Manage delivery zones and pickup options" onPress={() => soon('Delivery and Pickup')} />
+        <MenuRow ic="🏪" bg="#e3ecff" title="Manage Your Shop" sub="Shop photo, details and categories" onPress={() => setPage('manage')} />
+        <MenuRow ic="🕒" bg="#fff0d6" title="Business Hours" sub="Set open hours and holidays" onPress={() => setPage('hours')} />
+        <MenuRow ic="🚚" bg="#d9f8ec" title="Delivery and Pickup" sub="Manage delivery zones and pickup options" onPress={() => setPage('delivery')} />
+        <MenuRow ic="📍" bg="#e1f7e3" title="Area Delivery Charges" sub="Set delivery fees for different areas" onPress={() => setPage('fees')} />
+        <MenuRow ic="📒" bg="#fff0d6" title="Khata Management" sub="Approve customers and manage credit payments" onPress={() => setPage('khata')} />
         <MenuRow ic="💳" bg="#e6e8ff" title="Payment Account" sub="Manage UPI ID and payment QR code" onPress={() => { setPmsg(''); setPayOpen(true); }} last />
       </View>
 
       <Text style={[s.h, { marginHorizontal: 14, marginTop: 14, marginBottom: 0 }]}>Products & Sales</Text>
       <View style={[s.card, { padding: 0, overflow: 'hidden' }]}>
-        <MenuRow ic="🗂️" bg="#e3ecff" title="Categories" sub="Manage your product categories" onPress={() => soon('Categories')} />
-        <MenuRow ic="📦" bg="#d9f6ff" title="Inventory" sub="Track stock and manage inventory" onPress={() => soon('Inventory')} />
-        <MenuRow ic="🏷️" bg="#fde4ea" title="Deals and Offers" sub="Create and manage deals and discounts" onPress={() => soon('Deals and Offers')} />
-        <MenuRow ic="📈" bg="#e1f7e3" title="Sales Report" sub="View sales performance and reports" onPress={() => soon('Sales Report')} />
-        <MenuRow ic="⭐" bg="#fff3c4" title="Customers Reviews" sub="View and respond to customer reviews" onPress={() => soon('Customers Reviews')} last />
+        <MenuRow ic="🗂️" bg="#ece4fb" title="Categories" sub="Manage your product categories" onPress={() => setPage('cats')} />
+        <MenuRow ic="📦" bg="#d9f6ff" title="Inventory" sub="Track stock and manage inventory" onPress={() => setPage('inventory')} />
+        <MenuRow ic="🏷️" bg="#fde4ea" title="Deals and Offers" sub="Create and manage deals and discounts" onPress={() => setPage('deals')} />
+        <MenuRow ic="📈" bg="#e1f7e3" title="Sales Report" sub="View sales performance and reports" onPress={() => setPage('sales')} />
+        <MenuRow ic="⭐" bg="#fff3c4" title="Customers Reviews" sub="View customer ratings and feedback" onPress={() => setPage('reviews')} last />
       </View>
 
       <Text style={[s.h, { marginHorizontal: 14, marginTop: 14, marginBottom: 8 }]}>Support & Account</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between',
         paddingHorizontal: 14 }}>
+        <ProfTile ic="🔔" bg="#fde4ea" title="Notification" sub="New orders & stock alerts" badge={newCount > 0 ? newCount : null}
+          onPress={() => setPage('notif')} />
         <ProfTile ic="🌐" bg="#e3ecff" title="Language" sub={langName} onPress={() => onLang('pick')} />
-        <ProfTile ic="🎧" bg="#dcf5e9" title="Customer Support" sub="Get help and support" onPress={() => soon('Customer Support')} />
-        <ProfTile ic="🔔" bg="#fff0d6" title="Notification" sub={vib ? 'New order alert (vibration): On' : 'New order alert (vibration): Off'}
-          onPress={() => toggleVib(!vib)} />
+        <ProfTile ic="🎧" bg="#dcf5e9" title="Customer Support" sub={SUPPORT_PHONE} onPress={() => setPage('support')} />
         <ProfTile ic="↪" bg="#fdecef" title="Log Out" sub="Logout from your seller account" onPress={onLogout} danger />
       </View>
 
@@ -3630,6 +4787,7 @@ function TabBar({ tabs, cur, onPick }) {
 function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
   const [tab, setTab] = useState('dash');
   const [selId, setSelId] = useState(null);
+  const [morePage, setMorePage] = useState(null);
   const [products, setProducts] = useState([]);
   const [perr, setPerr] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -3644,22 +4802,24 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
   const newCount = os.filter((o) => o.status === 'new').length;
   const pick = (k) => {
     if (k === 'add') { setTab('products'); setAddOpen(true); return; }
-    setSelId(null); setTab(k);
+    setSelId(null); if (k === 'more') setMorePage(null); setTab(k);
   };
   const goTab = (k) => { setSelId(null); setTab(k); };
   const openOrder = (id) => { setTab('orders'); setSelId(id); };
+  const openNotif = () => { setSelId(null); setMorePage('notif'); setTab('more'); };
   let body = null;
   if (tab === 'dash') {
     body = <SellerDash shop={shop} setShop={setShop} os={os} products={products}
-      goTab={goTab} openOrder={openOrder} reloadP={reloadP} ordersErr={oerr} />;
+      goTab={goTab} openOrder={openOrder} reloadP={reloadP} ordersErr={oerr} onBell={openNotif} />;
   } else if (tab === 'orders') {
     body = <SellerOrders os={os} load={load} selId={selId} setSel={setSelId} err0={oerr}
       hasMore={hasMore} loadMore={loadMore} />;
   } else if (tab === 'products') {
-    body = <SellerProducts shop={shop} products={products} reloadP={reloadP}
+    body = <SellerProducts shop={shop} setShop={setShop} products={products} reloadP={reloadP}
       addOpen={addOpen} setAddOpen={setAddOpen} perr={perr} />;
   } else {
-    body = <SellerMore shop={shop} setShop={setShop} lang={lang} onLang={onLang} onLogout={onLogout} />;
+    body = <SellerMore shop={shop} setShop={setShop} lang={lang} onLang={onLang} onLogout={onLogout}
+      os={os} products={products} reloadP={reloadP} page={morePage} setPage={setMorePage} openOrder={openOrder} />;
   }
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
@@ -3685,459 +4845,741 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
   );
 }
 
-// ======================================================================
-// APP
-// ======================================================================
-export default function App() {
-  const [ready, setReady] = useState(false);
-  const [recovery, setRecovery] = useState(null);
-const [authForgot, setAuthForgot] = useState(false);
-const handledLinks = useRef({});
-  const [splashDone, setSplashDone] = useState(false);
-  const [lang, setLang] = useState('en');
-  const [langPick, setLangPick] = useState(false);
-  const [session, setSession] = useState(null);
-  const [profile, setProfileS] = useState({ name: '', phone: '', address: '' });
-  const [loc, setLocS] = useState(null);
-  const [locOpen, setLocOpen] = useState(false);
-  const [authRole, setAuthRole] = useState(null); // null | 'buyer' | 'seller'
-  const [shops, setShops] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
-  const [tab, setTab] = useState('home');
-  const [shopSel, setShopSel] = useState(null);
-  const [focusId, setFocusId] = useState(null);
-  const [catInit, setCatInit] = useState(null);
-  const [cart, setCart] = useState(null);
-  const [done, setDone] = useState(null);
-  const [myShop, setMyShop] = useState(null);
-  const [myShopErr, setMyShopErr] = useState('');
-  LANG = lang;
+const payShort = (o) => (o.pay === 'upi' ? 'UPI' : o.pay === 'khata' ? 'Khata' : 'Cash on Delivery');
 
-  // the role comes from the database (profiles.role), saved into the session after login / restore
-  const isSeller = !!(session && session.role === 'seller');
-
-  // called by the API layer when the refresh token is no longer valid
-  ON_EXPIRED = () => {
-    setSession(null); setMyShop(null); setCart(null); setDone(null); setShopSel(null); setTab('home');
-    Alert.alert('Session expired', 'Please log in again.');
-  };
-
-  // ---- splash timer ----
-  useEffect(() => {
-    const t = setTimeout(() => setSplashDone(true), SPLASH_MS);
-    return () => clearTimeout(t);
-  }, []);
-
-  // ---- boot: restore saved data (+ refresh an expired access token) ----
-  useEffect(() => {
-    (async () => {
-      const l = await store.get('lang');
-      const ss = await store.get('session');
-      const pr = await store.get('profile');
-      const lc = await store.get('loc');
-      if (l) { LANG = l; setLang(l); }
-      if (pr) { try { setProfileS(JSON.parse(pr)); } catch (e) {} }
-      if (lc) { try { setLocS(JSON.parse(lc)); } catch (e) {} }
-      if (ss) {
-        try {
-          SESSION = JSON.parse(ss);
-          if (SESSION && SESSION.expires_at && Date.now() > SESSION.expires_at - 30000) {
-            try { await tryRefresh(); } catch (e) { /* offline: keep session, retry on next request */ }
-          }
-          if (SESSION) setSession(SESSION);
-        } catch (e) { SESSION = null; }
-      }
-      setReady(true);
-    })();
-  }, []);
-  // Register device for push notifications after login
-useEffect(() => {
-  if (!ready || !session || !session.uid) return;
-
-  registerPushToken().catch((e) => {
-    console.log('Push registration error:', e);
+// find the delivery fee of the buyer's area (longest matching area name wins)
+function matchFee(fees, text) {
+  const t = String(text || '').toLowerCase();
+  let best = null;
+  (fees || []).forEach((f) => {
+    const a = String(f.area || '').trim().toLowerCase();
+    if (a && t.indexOf(a) >= 0 && (!best || a.length > String(best.area).length)) best = f;
   });
-}, [ready, session && session.uid]);
+  return best;
+}
 
-// ---- password recovery deep link handler ----
-useEffect(() => {
-  let active = true;
-
-  const handleRecoveryUrl = async (url) => {
-    if (!active || !url || handledLinks.current[url]) return;
-
-    handledLinks.current[url] = true;
-
-    try {
-      const parsed = ExLink.parse(url);
-      const params = parsed.queryParams || {};
-
-      if (params.error || params.error_description) {
-        Alert.alert(
-          'Password Reset',
-          params.error_description || params.error || 'Password reset link is invalid.'
-        );
-        return;
-      }
-
-      const code = params.code;
-
-      if (!code) return;
-
-      const verifier = await loadVerifier();
-
-      if (!verifier) {
-        Alert.alert(
-          'Password Reset',
-          'Reset session expired. Please request a new password reset link.'
-        );
-        return;
-      }
-
-      const tokenData = await raw('/auth/v1/token?grant_type=pkce', {
-        method: 'POST',
-        body: {
-          auth_code: code,
-          code_verifier: verifier,
-        },
-      });
-
-      if (!active) return;
-
-      if (!tokenData || !tokenData.access_token) {
-        throw new Error('Could not verify reset link. Please request a new one.');
-      }
-
-      await clearVerifier();
-
-      if (active) {
-        setAuthForgot(false);
-        setRecovery(tokenData);
-      }
-    } catch (e) {
-      if (active) {
-        Alert.alert(
-          'Password Reset',
-          authErrMsg(e) || 'Reset link could not be verified. Please try again.'
-        );
-      }
-    }
-  };
-
-  const subscription = ExLink.addEventListener('url', ({ url }) => {
-    handleRecoveryUrl(url);
-  });
-
-  ExLink.getInitialURL()
-    .then((url) => {
-      if (url) handleRecoveryUrl(url);
-    })
-    .catch(() => {});
-
-  return () => {
-    active = false;
-    subscription?.remove();
-  };
-}, []);
-
-  // ---- shops + products (public read, RLS decides what is visible) ----
-  const loadAll = useCallback(async () => {
-    setLoading(true); setErr('');
-    try {
-      const sh = unwrapList(await shopRpc('list'));
-      const pr = await api('/rest/v1/products?active=eq.true&select=*&order=name&limit=60');
-      setShops(sh); setProducts(withShopNames(pr || [], sh));
-    } catch (e) { setErr(errMsg(e)); }
-    setLoading(false);
-  }, []);
-  useEffect(() => { if (ready) loadAll(); }, [ready, loadAll]);
-
-  // ---- my shop: loaded ONLY for seller accounts ----
-  useEffect(() => {
-    if (!session || session.role !== 'seller') { setMyShop(null); setMyShopErr(''); return; }
-    setMyShop(undefined); setMyShopErr('');
-    shopRpc('mine')
-      .then((r0) => { const r = Array.isArray(r0) ? r0[0] : r0; setMyShop(r && r.id ? r : null); })
-      .catch((e) => { setMyShopErr(errMsg(e)); setMyShop(null); });
-  }, [session && session.uid, session && session.role]);
-
-  // ---- profile helpers ----
-  const applyProfileData = (p) => {
-    if (!p) return;
-    setProfileS((prev) => {
-      const np = { name: p.name || prev.name || '', phone: p.phone || prev.phone || '',
-        address: p.address || prev.address || '' };
-      store.set('profile', JSON.stringify(np));
-      return np;
-    });
-    if (p.area) {
-      setLocS((prev) => {
-        if (prev && prev.area) return prev;
-        const nl = { area: p.area, full: typeof p.location === 'string' ? p.location : '' };
-        store.set('loc', JSON.stringify(nl));
-        return nl;
-      });
-    }
-  };
-  const fetchProfile = fetchProfileRow;
-  // update_my_profile writes role 'buyer', so it is used for BUYER accounts only.
-  // A seller account never calls it (the seller row is written by ensureSellerProfile).
-  const syncRemote = (p, l) => {
-    if (!SESSION || SESSION.role === 'seller') return Promise.resolve(null);
-    return rpc('update_my_profile', {
-      p_name: (p.name || '').trim() || null,
-      p_phone: (p.phone || '').trim() || null,
-      p_location: l ? (l.full || l.area || null) : null,
-      p_area: l && l.area ? l.area : null,
-      p_address: (p.address || '').trim() || null,
-    });
-  };
-  // load profile (and the role stored in the database) after a restored session
-  useEffect(() => {
-    if (!ready || !session) return;
-    let dead = false;
-    fetchProfile(session.uid).then((p) => {
-      if (dead || !p) return;
-      applyProfileData(p);
-      if (p.role) {
-        const role = p.role === 'seller' ? 'seller' : 'buyer';
-        if (SESSION && SESSION.role !== role) {
-          SESSION = { ...SESSION, role }; setSession(SESSION); store.set('session', JSON.stringify(SESSION));
-        }
-      }
-    }).catch(() => {});
-    return () => { dead = true; };
-  }, [ready, session && session.uid]);
-
-  // ---- handlers ----
-  const pickLang = (k) => { LANG = k; setLang(k); store.set('lang', k); setLangPick(false); };
-  const setProfile = (p) => { setProfileS(p); store.set('profile', JSON.stringify(p)); };
-  const saveProfile = async (p) => {
-    setProfile(p);
-    if (!SESSION) return '';
-    try { await syncRemote(p, loc); return ''; } catch (e) { return errMsg(e); }
-  };
-  const saveLoc = (l) => {
-    setLocS(l); store.set('loc', JSON.stringify(l));
-    let np = profile;
-    if (l.full && !profile.address) { np = { ...profile, address: l.full }; setProfile(np); }
-    if (SESSION) syncRemote(np, l).catch(() => {});
-    setLocOpen(false);
-  };
-  // Called after a REAL Supabase session exists (login, or signup without email confirmation).
-  // The role is decided from the database, never from user_metadata or from the screen used to log in.
-  const onSession = async (sess) => {
-    const intent = authRole;
-    const metaRole = sess.meta_role;
-    const clean = { token: sess.token, refresh: sess.refresh, uid: sess.uid, email: sess.email,
-      expires_at: sess.expires_at };
-    let full = { ...clean, role: 'buyer' };
-    SESSION = full; // needed so that the api() calls below are authenticated
-
-    let p = null;
-    try { p = await fetchProfile(clean.uid); } catch (e) { p = null; }
-    let role = p && p.role ? (p.role === 'seller' ? 'seller' : 'buyer') : null;
-
-    // Fresh seller account (signed up from "Create a Shop Profile") that has no seller row yet:
-    // user_metadata only starts the onboarding, the role itself is then written to the database.
-    if (intent === 'seller' && role !== 'seller' && metaRole === 'seller') {
-      let hasOrders = true;
-      try {
-        hasOrders = unwrapList(await rpc('get_my_orders_paginated', { p_limit: 1, p_offset: 0 })).length > 0;
-      } catch (e) { hasOrders = true; }
-      if (!hasOrders) {
-        try {
-          await ensureSellerProfile(clean.uid, { email: clean.email });
-          role = 'seller';
-          try { p = (await fetchProfile(clean.uid)) || p; } catch (e) {}
-        } catch (e) { Alert.alert('Seller profile', errMsg(e)); }
-      }
-    }
-    // no profile row at all -> a user who already owns a shop is a seller, everybody else is a buyer
-    if (!role) {
-      try {
-        let sh = await shopRpc('mine');
-        if (Array.isArray(sh)) sh = sh[0];
-        role = sh && sh.id ? 'seller' : 'buyer';
-      } catch (e) { role = 'buyer'; }
-    }
-    if (intent === 'seller' && role !== 'seller') {
-      Alert.alert('Buyer account', 'This is a buyer account. Please use a seller account for the Partner Hub.');
-    }
-    full = { ...full, role };
-    SESSION = full;
-    setSession(full); store.set('session', JSON.stringify(full)); setAuthRole(null);
-    if (p) applyProfileData(p);
-    setTab(role === 'seller' ? 'home' : tab);
-  };
-  const logout = () => {
-    const tk = SESSION && SESSION.token;
-    if (tk) raw('/auth/v1/logout', { method: 'POST' }, tk).catch(() => {});
-    SESSION = null; setSession(null); store.del('session');
-    // clear the saved account details so the next account (buyer or seller) never sees them
-    setProfileS({ name: '', phone: '', address: '' }); store.del('profile');
-    setMyShop(null); setMyShopErr(''); setAuthRole(null); setCart(null); setDone(null); setShopSel(null); setTab('home');
-    loadAll();
-  };
-  const addToCart = (shop, p, qty) => {
-    const put = (base) => setCart({ shop, items: { ...base, [p.id]: { p, qty } } });
-    if (cart && cart.shop.id !== shop.id) {
-      Alert.alert(trs('Different shop'), trs('Your cart has items from another shop. Clear it?'), [
-        { text: trs('No'), style: 'cancel' },
-        { text: trs('Yes'), onPress: () => put({}) },
-      ]);
-    } else put(cart ? cart.items : {});
-  };
-  const reorder = async (o) => {
-    try {
-      const ps = await api('/rest/v1/products?shop_id=eq.' + o.shop_id + '&active=eq.true&select=*');
-      const items = {};
-      (o.order_items || []).forEach((i) => {
-        const p = (ps || []).find((x) => x.id === i.product_id) || (ps || []).find((x) => x.name === i.name);
-        if (p && Number(p.online_qty) > 0) items[p.id] = { p, qty: Math.min(Number(i.qty), Number(p.online_qty)) };
-      });
-      if (!Object.keys(items).length) { Alert.alert(trs('Reorder'), trs('Products not available')); return; }
-      let shop = shops.find((x) => x.id === o.shop_id);
-      if (!shop) { const r = unwrapList(await shopRpc('list')); shop = r.find((x) => x.id === o.shop_id); }
-      if (!shop) { Alert.alert(trs('Reorder'), trs('Products not available')); return; }
-      setCart({ shop, items }); setShopSel(null); setTab('cart');
-    } catch (e) { Alert.alert('Error', errMsg(e)); }
-  };
-  const openShop = (x) => { setFocusId(null); setShopSel(x); };
-  const openProduct = (p) => {
-    const sh = shops.find((x) => x.id === p.shop_id);
-    if (sh) { setFocusId(p.id); setShopSel(sh); }
-  };
-  const goTab = (k) => { setShopSel(null); setDone(null); setTab(k); };
-
-  // ---- screens ----
-  if (!ready || !splashDone) return <Splash />;
-
-  if (langPick) {
-    return <LangScreen current={lang} onPick={pickLang} onClose={() => setLangPick(false)} />;
-  }
-  
-if (recovery) {
+// ---- ledger list (orders + payments) ----
+function LedgerList({ entries }) {
+  if (!entries.length) return <Text style={s.sub}>No entries yet.</Text>;
   return (
-    <ResetPassword
-      recovery={recovery}
-      onDone={() => {
-        setRecovery(null);
-        setAuthRole(null);
-        setAuthForgot(false);
-      }}
-    />
+    <View>
+      {entries.map((e, i) => (
+        <View key={i} style={[s.rowB, { paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: LINE }]}>
+          <View style={{ flex: 1 }}>
+            <RNText style={s.shopN}>{e.kind === 'order' ? '🧾 Order ' + (e.ref ? '#' + e.ref : '') : '💵 Payment'}</RNText>
+            <RNText style={s.sub}>{when(e.at)}{e.note ? ' · ' + e.note : ''}</RNText>
+          </View>
+          <RNText style={{ fontWeight: '800', color: e.kind === 'order' ? RED : GREEN }}>
+            {(e.kind === 'order' ? '+ ' : '- ') + money(Number(e.amount))}
+          </RNText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// ---- Buyer: apply for Khata on a shop page ----
+function KhataApply({ shop, profile }) {
+  const [st, setSt] = useState(null);
+  const [bal, setBal] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const load = useCallback(() => {
+    if (!SESSION) { setSt(''); return; }
+    newRpc('khata_my_status', { p_shop_id: shop.id })
+      .then((r) => { const x = Array.isArray(r) ? r[0] : r; setSt((x && x.status) || ''); setBal(Number((x && x.balance) || 0)); })
+      .catch(() => setSt(''));
+  }, [shop.id]);
+  useEffect(() => { load(); }, [load]);
+  const apply = async () => {
+    if (!SESSION) { Alert.alert('Khata', 'Please login from Profile to apply for Khata.'); return; }
+    const name = ((profile && profile.name) || '').trim(), phone = ((profile && profile.phone) || '').trim();
+    if (!name || !/^\d{10}$/.test(phone)) { setMsg('Please save your name and 10-digit phone in Profile > Saved Addresses first.'); return; }
+    setBusy(true); setMsg('');
+    try { await newRpc('khata_apply', { p_shop_id: shop.id, p_name: name, p_phone: phone }); load(); }
+    catch (e) { setMsg(errMsg(e)); }
+    setBusy(false);
+  };
+  if (st === null) return null;
+  return (
+    <View style={[s.card, { backgroundColor: '#fff8e6', borderColor: '#f3dca0' }]}>
+      <View style={s.rowB}>
+        <Text style={s.h}>📒 Khata (pay later)</Text>
+        {st === 'approved' && <Tag t="✔ Approved" kind="g" />}
+        {st === 'pending' && <Tag t="Waiting for shop" kind="y" />}
+        {st === 'rejected' && <Tag t="Rejected" kind="r" />}
+      </View>
+      {st === 'approved' && <RNText style={s.sub}>{'You can choose Khata at checkout. Current due: ' + money(bal)}</RNText>}
+      {st === 'pending' && <Text style={s.sub}>The shop owner will approve or reject your request.</Text>}
+      {(st === '' || st === 'rejected') && (
+        <View>
+          <Text style={s.sub}>Apply to buy on credit from this shop and pay later.</Text>
+          <Btn small t={busy ? 'Please wait...' : st === 'rejected' ? 'Apply again' : 'Apply for Khata'} onPress={apply}
+            disabled={busy} style={{ marginTop: 8, alignSelf: 'flex-start' }} />
+        </View>
+      )}
+      <Msg t={msg} />
+    </View>
+  );
+}
+
+// ---- Buyer: Khata page (all shops, dues, UPI ID + QR to pay) ----
+function BuyerKhata({ session, onBack }) {
+  const [list, setList] = useState([]);
+  const [ld, setLd] = useState(false);
+  const [err, setErr] = useState('');
+  const [payA, setPayA] = useState(null);       // account whose UPI details are shown
+  const [payInfo, setPayInfo] = useState(null);
+  const [payLd, setPayLd] = useState(false);
+  const [payErr, setPayErr] = useState('');
+  const [led, setLed] = useState(null);         // account whose ledger is shown
+  const [entries, setEntries] = useState([]);
+  const [ledLd, setLedLd] = useState(false);
+  const [ledErr, setLedErr] = useState('');
+  const load = useCallback(() => {
+    if (!session) { setList([]); return; }
+    setLd(true);
+    kRpc(KHATA.myAccounts())
+      .then((r) => { setList(unwrapList(r)); setErr(''); })
+      .catch((e) => setErr(errMsg(e))).finally(() => setLd(false));
+  }, [session]);
+  useEffect(() => { load(); }, [load]);
+  const openPay = (a) => {
+    setPayA(a); setPayInfo(null); setPayErr(''); setPayLd(true);
+    rpc('get_shop_payment', { p_shop_id: a.shop_id })
+      .then((r) => { const x = Array.isArray(r) ? r[0] : r; setPayInfo(x && typeof x === 'object' ? x : null); })
+      .catch((e) => setPayErr(errMsg(e))).finally(() => setPayLd(false));
+  };
+  const openLedger = (a) => {
+    setLed(a); setEntries([]); setLedErr(''); setLedLd(true);
+    kRpc(KHATA.ledger(a.account_id))
+      .then((r) => setEntries(unwrapList(r)))
+      .catch((e) => setLedErr(errMsg(e))).finally(() => setLedLd(false));
+  };
+  const upi = payInfo && payInfo.upi_id ? String(payInfo.upi_id) : '';
+  const qr = payInfo && payInfo.qr_url ? String(payInfo.qr_url) : '';
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView style={{ backgroundColor: BG }} refreshControl={<RefreshControl refreshing={ld} onRefresh={load} />}>
+        <Head title="My Khata" sub="Credit balance and payment history" color={AMBER} onBack={onBack} />
+        {!session && <Text style={s.empty}>Login or sign up to continue</Text>}
+        <Msg t={err} />
+        {session && !ld && !err && list.length === 0 && (
+          <Text style={s.empty}>No Khata accounts yet. Open a shop and tap "Apply for Khata".</Text>
+        )}
+        {list.map((a) => (
+          <View key={a.account_id} style={s.card}>
+            <View style={s.rowB}>
+              <RNText style={[s.shopN, { flex: 1 }]} numberOfLines={1}>{a.shop_name || 'Shop'}</RNText>
+              {a.status === 'approved' && <Tag t="✔ Approved" kind="g" />}
+              {a.status === 'pending' && <Tag t="Waiting for shop" kind="y" />}
+              {a.status === 'rejected' && <Tag t="Rejected" kind="r" />}
+            </View>
+            {a.status === 'approved' && (
+              <View>
+                <View style={[s.rowB, { marginTop: 8 }]}>
+                  <Text style={s.sub}>Due amount</Text>
+                  <RNText style={{ fontSize: 20, fontWeight: '800', color: Number(a.balance) > 0 ? RED : GREEN }}>{money(Number(a.balance || 0))}</RNText>
+                </View>
+                {a.credit_limit !== undefined && a.credit_limit !== null && (
+                  <View style={[s.rowB, { marginTop: 6 }]}>
+                    <Text style={s.sub}>Credit limit</Text>
+                    <RNText style={{ color: INK, fontWeight: '700' }}>{money(Number(a.credit_limit))}</RNText>
+                  </View>
+                )}
+                {a.credit_limit !== undefined && a.credit_limit !== null && (
+                  <View style={[s.rowB, { marginTop: 6 }]}>
+                    <Text style={s.sub}>Available credit</Text>
+                    <RNText style={{ color: GREEN, fontWeight: '700' }}>{money(Math.max(0, Number(a.credit_limit) - Number(a.balance || 0)))}</RNText>
+                  </View>
+                )}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <Btn kind="g" t="Pay now" style={{ flex: 1.2 }} onPress={() => openPay(a)} />
+                  <Btn kind="o" t="Ledger" style={{ flex: 1 }} onPress={() => openLedger(a)} />
+                </View>
+              </View>
+            )}
+          </View>
+        ))}
+        <View style={{ height: 30 }} />
+      </ScrollView>
+      {payA && (
+        <Sheet onClose={() => setPayA(null)}>
+          <View style={s.rowB}>
+            <Text style={s.h}>Pay {payA.shop_name || 'shop'}</Text>
+            <TouchableOpacity onPress={() => setPayA(null)}><Text style={{ color: MUTE }}>Close</Text></TouchableOpacity>
+          </View>
+          <RNText style={s.sub}>{'Due ' + money(Number(payA.balance || 0))}</RNText>
+          {payLd && <ActivityIndicator color={BLUE} style={{ margin: 16 }} />}
+          <Msg t={payErr} />
+          {!payLd && !payErr && !upi && !qr && (
+            <Msg t="This shop has not added UPI details yet. Please pay the shop directly." />
+          )}
+          {!payLd && !payErr && (!!upi || !!qr) && (
+            <View style={{ alignItems: 'center', marginTop: 12 }}>
+              {!!qr && <QrImage url={qr} />}
+              {!!upi && (
+                <View style={{ marginTop: 12, alignItems: 'center' }}>
+                  <Text style={s.sub}>UPI ID</Text>
+                  <RNText selectable style={{ fontSize: 17, fontWeight: '800', color: INK, marginTop: 2 }}>{upi}</RNText>
+                  <Btn small kind="o" t="Open UPI app" onPress={() => openUpi(upi, payA.shop_name, Number(payA.balance || 0))}
+                    style={{ marginTop: 8 }} />
+                </View>
+              )}
+              <Text style={[s.sub, { marginTop: 12, textAlign: 'center' }]}>After paying, tell the shop so they can record your payment.</Text>
+            </View>
+          )}
+        </Sheet>
+      )}
+      {led && (
+        <Sheet onClose={() => setLed(null)}>
+          <View style={s.rowB}>
+            <Text style={s.h}>{led.shop_name || 'Shop'}</Text>
+            <TouchableOpacity onPress={() => setLed(null)}><Text style={{ color: MUTE }}>Close</Text></TouchableOpacity>
+          </View>
+          {ledLd && <ActivityIndicator color={BLUE} style={{ margin: 16 }} />}
+          <Msg t={ledErr} />
+          <ScrollView style={{ maxHeight: 380 }}><LedgerList entries={entries} /></ScrollView>
+        </Sheet>
+      )}
+    </View>
+  );
+}
+
+// ---- Seller: Khata Management (approve customers, credit limit, payments, ledger) ----
+function SellerKhata({ shop, onBack }) {
+  const [list, setList] = useState([]);
+  const [tab, setTab] = useState('pending');
+  const [ld, setLd] = useState(true);
+  const [msg, setMsg] = useState('');
+  const [limitA, setLimitA] = useState(null);
+  const [limitVal, setLimitVal] = useState('');
+  const [payA, setPayA] = useState(null);
+  const [amt, setAmt] = useState('');
+  const [note, setNote] = useState('');
+  const [led, setLed] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const load = useCallback(() => {
+    setLd(true);
+    kRpc(KHATA.shopAccounts(shop.id))
+      .then((r) => setList(unwrapList(r)))
+      .catch((e) => setMsg(errMsg(e))).finally(() => setLd(false));
+  }, [shop.id]);
+  useEffect(() => { load(); }, [load]);
+  const shown = list.filter((a) => a.status === tab);
+  const decide = async (a, ok) => {
+    setMsg('');
+    try { await kRpc(KHATA.decide(a.account_id, ok)); setMsg('✅ Saved'); load(); }
+    catch (e) { setMsg(errMsg(e)); }
+  };
+  const openLimit = (a) => {
+    setMsg(''); setLimitA(a);
+    setLimitVal(a.credit_limit !== undefined && a.credit_limit !== null ? String(a.credit_limit) : '');
+  };
+  const saveLimit = async () => {
+    const v = Number(limitVal);
+    if (limitVal === '' || !Number.isFinite(v) || v < 0) { setMsg('Enter a valid credit limit'); return; }
+    try { await kRpc(KHATA.setLimit(limitA.account_id, v)); setLimitA(null); setMsg('✅ Saved'); load(); }
+    catch (e) { setMsg(errMsg(e)); }
+  };
+  const openPay = (a) => { setMsg(''); setAmt(''); setNote(''); setPayA(a); };
+  const record = async () => {
+    const v = Number(amt);
+    if (!(v > 0)) { setMsg('Enter the amount received'); return; }
+    try { await kRpc(KHATA.record(payA.account_id, v, note.trim())); setPayA(null); setMsg('✅ Saved'); load(); }
+    catch (e) { setMsg(errMsg(e)); }
+  };
+  const openLedger = (a) => {
+    setLed(a); setEntries([]);
+    kRpc(KHATA.ledger(a.account_id))
+      .then((r) => setEntries(unwrapList(r)))
+      .catch((e) => setMsg(errMsg(e)));
+  };
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+        <Head title="Khata Management" sub="Approve customers and manage credit payments" color={AMBER} onBack={onBack} />
+        <Msg t={msg} ok={msg.startsWith('✅')} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 14, paddingBottom: 4 }}>
+          {[['pending', 'Requests'], ['approved', 'Approved'], ['rejected', 'Rejected']].map(([k, t]) => (
+            <Chip key={k} color={AMBER} t={t + ' ' + list.filter((a) => a.status === k).length} on={tab === k} onPress={() => setTab(k)} />
+          ))}
+        </View>
+        {ld && <ActivityIndicator color={BLUE} style={{ margin: 20 }} />}
+        {!ld && shown.length === 0 && <Text style={s.empty}>No customers in this list.</Text>}
+        {shown.map((a) => (
+          <View key={a.account_id} style={s.card}>
+            <View style={s.rowB}>
+              <View style={{ flex: 1 }}>
+                <RNText style={s.shopN}>{a.customer_name || 'Customer'}</RNText>
+                <RNText style={s.sub}>{a.customer_phone || ''}</RNText>
+              </View>
+              {!!a.customer_phone && <Btn small kind="o" t="Call" onPress={() => callPhone(a.customer_phone)} />}
+            </View>
+            {a.status === 'approved' && (
+              <View>
+                <View style={[s.rowB, { marginTop: 8 }]}>
+                  <Text style={s.sub}>Due amount</Text>
+                  <RNText style={{ fontSize: 20, fontWeight: '800', color: Number(a.balance) > 0 ? RED : GREEN }}>{money(Number(a.balance || 0))}</RNText>
+                </View>
+                {a.credit_limit !== undefined && a.credit_limit !== null && (
+                  <View style={[s.rowB, { marginTop: 6 }]}>
+                    <Text style={s.sub}>Credit limit</Text>
+                    <RNText style={{ color: INK, fontWeight: '700' }}>{money(Number(a.credit_limit))}</RNText>
+                  </View>
+                )}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <Btn kind="g" t="Payment received" style={{ flex: 1.4 }} onPress={() => openPay(a)} />
+                  <Btn kind="o" t="Limit" style={{ flex: 1 }} onPress={() => openLimit(a)} />
+                  <Btn kind="o" t="Ledger" style={{ flex: 1 }} onPress={() => openLedger(a)} />
+                </View>
+              </View>
+            )}
+            {a.status === 'pending' && (
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                <Btn kind="g" t="Approve" style={{ flex: 1.3 }} onPress={() => decide(a, true)} />
+                <Btn kind="r" t="Reject" style={{ flex: 1 }} onPress={() => decide(a, false)} />
+              </View>
+            )}
+            {a.status === 'rejected' && (
+              <View style={{ marginTop: 12 }}>
+                <Btn small kind="g" t="Approve now" onPress={() => decide(a, true)} style={{ alignSelf: 'flex-start' }} />
+              </View>
+            )}
+          </View>
+        ))}
+        <View style={{ height: 30 }} />
+      </ScrollView>
+      {limitA && (
+        <Sheet onClose={() => setLimitA(null)}>
+          <Text style={s.h}>Set Customer Credit Limit</Text>
+          <RNText style={s.sub}>{limitA.customer_name || 'Customer'}</RNText>
+          <View style={{ height: 12 }} />
+          <Field label="Credit Limit (₹)" value={limitVal} onChangeText={setLimitVal}
+            keyboardType="decimal-pad" placeholder="Example: 2000" />
+          <Text style={s.sub}>0 means this customer cannot place new Khata orders.</Text>
+          <Msg t={msg && !msg.startsWith('✅') ? msg : ''} />
+          <Btn kind="g" t="Save Credit Limit" onPress={saveLimit} style={{ minHeight: 50, marginTop: 12 }} />
+        </Sheet>
+      )}
+      {payA && (
+        <Sheet onClose={() => setPayA(null)}>
+          <Text style={s.h}>Payment received</Text>
+          <RNText style={s.sub}>{(payA.customer_name || 'Customer') + ' · Due ' + money(Number(payA.balance || 0))}</RNText>
+          <View style={{ height: 10 }} />
+          <Field label="Amount received (₹)" value={amt} onChangeText={setAmt} keyboardType="decimal-pad" />
+          <Field label="Note (optional)" value={note} onChangeText={setNote} autoCapitalize="sentences" />
+          <Msg t={msg && !msg.startsWith('✅') ? msg : ''} />
+          <Btn kind="g" t="Save payment" onPress={record} style={{ minHeight: 50 }} />
+        </Sheet>
+      )}
+      {led && (
+        <Sheet onClose={() => setLed(null)}>
+          <View style={s.rowB}>
+            <Text style={s.h}>{led.customer_name || 'Customer'}</Text>
+            <TouchableOpacity onPress={() => setLed(null)}><Text style={{ color: MUTE }}>Close</Text></TouchableOpacity>
+          </View>
+          <ScrollView style={{ maxHeight: 380 }}><LedgerList entries={entries} /></ScrollView>
+        </Sheet>
+      )}
+    </View>
+  );
+}
+
+// ---- Seller: area wise delivery charges ----
+function SellerFees({ shop, onBack }) {
+  const [list, setList] = useState([]);
+  const [area, setArea] = useState('');
+  const [fee, setFee] = useState('');
+  const [msg, setMsg] = useState('');
+  const load = useCallback(() => {
+    newRpc('shop_fees_get', { p_shop_id: shop.id }).then((r) => setList(unwrapList(r))).catch((e) => setMsg(errMsg(e)));
+  }, [shop.id]);
+  useEffect(() => { load(); }, [load]);
+  const add = async () => {
+    const f = Number(fee);
+    if (!area.trim()) { setMsg('Enter the area name'); return; }
+    if (fee === '' || !(f >= 0)) { setMsg('Enter a valid fee'); return; }
+    try {
+      await newRpc('shop_fee_save', { p_shop_id: shop.id, p_area: area.trim(), p_fee: f });
+      setArea(''); setFee(''); setMsg('✅ Saved'); load();
+    } catch (e) { setMsg(errMsg(e)); }
+  };
+  const del = (x) => Alert.alert(x.area, 'Remove this area?', [
+    { text: trs('No'), style: 'cancel' },
+    { text: trs('Yes'), style: 'destructive', onPress: async () => {
+      try { await newRpc('shop_fee_delete', { p_id: x.id }); load(); } catch (e) { setMsg(errMsg(e)); }
+    } },
+  ]);
+  return (
+    <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
+      <Head title="Area Delivery Charges" sub="Set a delivery fee for each area" color={GREEN} onBack={onBack} />
+      <Msg t={msg} ok={msg.startsWith('✅')} />
+      <View style={s.card}>
+        <Text style={s.h}>➕ Add area fee</Text>
+        <Field label="Area name" value={area} onChangeText={setArea} autoCapitalize="words" placeholder="e.g. Rasulgarh" />
+        <Field label="Delivery fee (₹)" value={fee} onChangeText={setFee} keyboardType="decimal-pad" placeholder="e.g. 30" />
+        <Btn kind="g" t="Save" onPress={add} />
+        <Text style={[s.sub, { marginTop: 8 }]}>When a buyer's delivery area matches, this fee is added to the order automatically. Add as many areas as you want. Saving the same area again updates its fee.</Text>
+      </View>
+      <View style={s.card}>
+        <Text style={s.h}>Your areas ({list.length})</Text>
+        {list.length === 0 && <Text style={s.sub}>No area added yet. Delivery stays free.</Text>}
+        {list.map((x) => (
+          <View key={x.id} style={[s.rowB, { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: LINE }]}>
+            <RNText style={[s.shopN, { flex: 1 }]}>{'📍 ' + x.area}</RNText>
+            <RNText style={[s.price, { marginRight: 12 }]}>{money(Number(x.fee))}</RNText>
+            <TouchableOpacity onPress={() => del(x)}><RNText style={{ color: RED, fontWeight: '700' }}>Remove</RNText></TouchableOpacity>
+          </View>
+        ))}
+      </View>
+      <View style={{ height: 30 }} />
+    </ScrollView>
   );
 }
 
 
-  // login screen (buyer login or seller login)
-  if (authRole && !session) {
+// ======================================================================
+// ROOT APP
+// ======================================================================
+const EMPTY_PROFILE = { name: '', phone: '', address: '' };
+
+export default function App() {
+  const [splash, setSplash] = useState(true);
+  const [lang, setLangState] = useState('en');
+  const [langPicked, setLangPicked] = useState(true);
+  const [showLang, setShowLang] = useState(false);
+  const [session, setSession] = useState(null);
+  const [role, setRole] = useState('buyer');
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
+  const [loc, setLoc] = useState(null);
+  const [locOpen, setLocOpen] = useState(false);
+  const [shops, setShops] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [cart, setCart] = useState(null);
+  const [tab, setTab] = useState('home');
+  const [page, setPage] = useState(null); // 'notif' | 'khata' | 'support' | 'addr'
+  const [shopSel, setShopSel] = useState(null);
+  const [focusId, setFocusId] = useState(null);
+  const [catInit, setCatInit] = useState(null);
+  const [done, setDone] = useState(null);
+  const [authRole, setAuthRole] = useState(null); // null | 'buyer' | 'seller'
+  const [recovery, setRecovery] = useState(null);
+  const [myShop, setMyShop] = useState(null);
+  const [shopLoading, setShopLoading] = useState(false);
+  const [shopErr, setShopErr] = useState('');
+  const profKey = useRef('id');
+  const lastUrl = useRef('');
+
+  // ---------- data ----------
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = unwrapList(await shopRpc('list'));
+      setShops(list);
+      const p = await api('/rest/v1/products?active=eq.true&select=*&order=created_at.desc&limit=60');
+      setProducts(withShopNames(p, list));
+      setErr('');
+    } catch (e) { setErr(errMsg(e)); }
+    setLoading(false);
+  }, []);
+
+  const loadMyShop = async () => {
+    setShopLoading(true); setShopErr('');
+    try {
+      let r = await shopRpc('mine');
+      if (Array.isArray(r)) r = r[0];
+      setMyShop(r && r.id ? r : null);
+    } catch (e) { setShopErr(errMsg(e)); setMyShop(null); }
+    setShopLoading(false);
+  };
+
+  // ---------- session ----------
+  const clearUser = () => {
+    setSession(null); setRole('buyer'); setMyShop(null); setShopErr('');
+    setProfile(EMPTY_PROFILE); setCart(null);
+    setPage(null); setShopSel(null); setFocusId(null); setDone(null); setTab('home');
+  };
+  const logout = () => {
+    const tok = SESSION && SESSION.token;
+    if (tok) raw('/auth/v1/logout', { method: 'POST' }, tok).catch(() => {});
+    SESSION = null; store.del('session');
+    clearUser();
+    loadData();
+  };
+  // role always comes from the database row (profiles.role); wantSeller only when the user came from the seller login
+  const enterSession = async (sess, wantSeller, persist) => {
+    SESSION = sess;
+    if (persist) store.set('session', JSON.stringify(sess));
+    let row = null;
+    try { row = await fetchProfileRow(sess.uid); } catch (e) { row = null; }
+    if (!SESSION) return;
+    if (row) profKey.current = row.id === sess.uid ? 'id' : (row.user_id === sess.uid ? 'user_id' : 'id');
+    setSession(SESSION);
+    setProfile({
+      name: (row && row.name) || '',
+      phone: (row && row.phone) || '',
+      address: (row && row.address) || '',
+    });
+    const seller = (row && row.role === 'seller') || !!wantSeller;
+    setRole(seller ? 'seller' : 'buyer');
+    if (seller) await loadMyShop();
+    registerPushToken().catch(() => {});
+  };
+  const onSession = async (sess) => {
+    await enterSession(sess, authRole === 'seller', true);
+    setAuthRole(null);
+  };
+
+  // ---------- startup ----------
+  useEffect(() => {
+    ON_EXPIRED = () => { clearUser(); };
+    if (Notif && Notif.setNotificationHandler) {
+      try {
+        Notif.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true,
+            shouldPlaySound: true, shouldSetBadge: false,
+          }),
+        });
+      } catch (e) { /* notifications are optional */ }
+    }
+    let dead = false;
+    (async () => {
+      const t0 = Date.now();
+      const sl = await store.get('lang');
+      if (sl && TR[sl]) { LANG = sl; setLangState(sl); } else { setLangPicked(false); }
+      const sloc = await store.get('loc');
+      if (sloc) { try { setLoc(JSON.parse(sloc)); } catch (e) { /* ignore broken saved location */ } }
+      loadData();
+      const ss = await store.get('session');
+      if (ss) {
+        let sess = null;
+        try { sess = JSON.parse(ss); } catch (e) { sess = null; }
+        if (sess && sess.token && sess.uid) {
+          SESSION = sess;
+          try { await enterSession(sess, false, false); } catch (e) { /* session kept, user can retry */ }
+        }
+      }
+      const wait = SPLASH_MS - (Date.now() - t0);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      if (!dead) setSplash(false);
+    })();
+    return () => { dead = true; ON_EXPIRED = null; };
+  }, []);
+
+  // ---------- password reset deep link ----------
+  useEffect(() => {
+    if (!ExLink) return undefined;
+    const handle = async (url) => {
+      if (!url || url.indexOf('reset-password') < 0 || lastUrl.current === url) return;
+      lastUrl.current = url;
+      try {
+        const qp = (ExLink.parse(url).queryParams) || {};
+        const hp = {};
+        (url.indexOf('#') >= 0 ? url.split('#')[1] : '').split('&').forEach((kv) => {
+          const i = kv.indexOf('=');
+          if (i > 0) hp[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
+        });
+        if (qp.error_description || hp.error_description) {
+          Alert.alert('Password reset', String(qp.error_description || hp.error_description).replace(/\+/g, ' '));
+          return;
+        }
+        if (hp.access_token) { setRecovery({ access_token: hp.access_token }); return; }
+        if (qp.code) {
+          const verifier = await loadVerifier();
+          if (!verifier) { Alert.alert('Password reset', 'This reset link has expired. Please request a new one.'); return; }
+          const j = await raw('/auth/v1/token?grant_type=pkce', {
+            method: 'POST', body: { auth_code: String(qp.code), code_verifier: verifier },
+          });
+          if (!j || !j.access_token) throw new Error('Reset link is invalid. Please request a new one.');
+          await clearVerifier();
+          setRecovery({ access_token: j.access_token });
+        }
+      } catch (e) { Alert.alert('Password reset', authErrMsg(e)); }
+    };
+    ExLink.getInitialURL().then(handle).catch(() => {});
+    const sub = ExLink.addEventListener('url', (ev) => handle(ev && ev.url));
+    return () => { if (sub && sub.remove) sub.remove(); };
+  }, []);
+
+  // ---------- small handlers ----------
+  const changeLang = (l) => {
+    LANG = l; setLangState(l); store.set('lang', l); setLangPicked(true); setShowLang(false);
+  };
+  const onLang = (k) => { if (k === 'pick') setShowLang(true); else changeLang(k); };
+  const saveLoc = (l) => { setLoc(l); store.set('loc', JSON.stringify(l)); setLocOpen(false); };
+  const needLogin = () => setAuthRole('buyer');
+  const pick = (k) => { setDone(null); setPage(null); setShopSel(null); setFocusId(null); setTab(k); };
+  const openShop = (x) => { setPage(null); setFocusId(null); setShopSel(x); };
+  const openProduct = (p) => {
+    const sh = shops.find((x) => x.id === p.shop_id);
+    if (!sh) return;
+    setPage(null); setFocusId(p.id); setShopSel(sh);
+  };
+  const openCat = (c) => { setCatInit(c); pick('cats'); };
+
+  const addToCart = (shop, p, qty) => {
+    const doAdd = (base) => {
+      const items = { ...(base ? base.items : {}) };
+      items[p.id] = { p, qty };
+      setCart({ shop, items });
+    };
+    if (cart && cart.shop && cart.shop.id !== shop.id && Object.keys(cart.items || {}).length) {
+      Alert.alert(trs('Different shop'), trs('Your cart has items from another shop. Clear it?'), [
+        { text: trs('No'), style: 'cancel' },
+        { text: trs('Yes'), onPress: () => doAdd(null) },
+      ]);
+      return;
+    }
+    doAdd(cart);
+  };
+
+  const reorder = async (o) => {
+    const lines = (o.order_items || []).filter((i) => i.product_id);
+    const ids = lines.map((i) => i.product_id).join(',');
+    const none = () => Alert.alert(trs('Reorder'), trs('Products not available'));
+    if (!ids) { none(); return; }
+    try {
+      const fresh = (await api('/rest/v1/products?id=in.(' + ids + ')&active=eq.true&select=*')) || [];
+      const items = {};
+      lines.forEach((i) => {
+        const p = fresh.find((x) => x.id === i.product_id);
+        if (p && Number(p.online_qty) > 0) items[p.id] = { p, qty: Math.min(Number(i.qty), Number(p.online_qty)) };
+      });
+      const sid = o.shop_id || (fresh[0] && fresh[0].shop_id);
+      const shop = shops.find((x) => x.id === sid);
+      if (!Object.keys(items).length || !shop) { none(); return; }
+      setCart({ shop, items });
+      pick('cart');
+    } catch (e) { Alert.alert(trs('Reorder'), errMsg(e)); }
+  };
+
+  // saves name / phone / address on the buyer's own profiles row (role is never sent)
+  const saveProfile = async (d) => {
+    const clean = { name: (d.name || '').trim(), phone: (d.phone || '').trim(), address: (d.address || '').trim() };
+    setProfile(clean);
+    if (!SESSION) return '';
+    try {
+      const upd = await api('/rest/v1/profiles?' + profKey.current + '=eq.' + SESSION.uid, {
+        method: 'PATCH', prefer: 'return=representation', body: clean,
+      });
+      if (Array.isArray(upd) && upd.length === 0) {
+        await api('/rest/v1/profiles?on_conflict=id', {
+          method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal', body: { id: SESSION.uid, ...clean },
+        });
+      }
+      return '';
+    } catch (e) { return errMsg(e); }
+  };
+  const syncProfile = () => { if (SESSION && role === 'buyer') saveProfile(profile); };
+  const onOrderDone = (d) => { setCart(null); setDone(d); loadData(); };
+
+  // ======================================================================
+  // RENDER
+  // ======================================================================
+  if (splash) return <Splash />;
+
+  if (!langPicked || showLang) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: BLUE }}>
-        <StatusBar barStyle="light-content" backgroundColor={BLUE} />
-        <AuthScreen
-  role={authRole}
-  onSession={onSession}
-  onClose={() => setAuthRole(null)}
-  initialForgot={authForgot}
-/>
+      <LangScreen current={lang} onPick={changeLang}
+        onClose={() => { if (!langPicked) changeLang('en'); else setShowLang(false); }} />
+    );
+  }
+
+  if (recovery) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: BG }}>
+        <StatusBar barStyle="dark-content" />
+        <ResetPassword recovery={recovery} onDone={() => { setRecovery(null); setAuthRole('buyer'); }} />
       </SafeAreaView>
     );
   }
 
-  // SELLER ACCOUNT -> only Partner Hub (buyer screens are never shown)
-  if (isSeller) {
-    if (myShop === undefined) {
-      return (
-        <View style={{ flex: 1, backgroundColor: DARK, alignItems: 'center', justifyContent: 'center' }}>
-          <StatusBar barStyle="light-content" backgroundColor={DARK} />
-          <ActivityIndicator color="#fff" />
-        </View>
-      );
-    }
-    if (!myShop) {
-      return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: BLUE }}>
-          <StatusBar barStyle="light-content" backgroundColor={BLUE} />
-          <SellerSetupScreen
-            defaultArea={loc && loc.area}
-            onCreated={(sh) => { setMyShop(sh); loadAll(); }}
-            onLogout={logout}
-            loadErr={myShopErr}
-          />
-        </SafeAreaView>
-      );
-    }
+  if (authRole) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: BLUE }}>
-        <StatusBar barStyle="light-content" backgroundColor={BLUE} />
-        <SellerApp
-          shop={myShop}
-          setShop={setMyShop}
-          lang={lang}
-          onLang={() => setLangPick(true)}
-          onLogout={logout}
-        />
+      <SafeAreaView style={{ flex: 1, backgroundColor: BG }}>
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+        <AuthScreen role={authRole} onSession={onSession} onClose={() => setAuthRole(null)} />
       </SafeAreaView>
     );
   }
 
-  // GUEST / BUYER
+  // ---------- seller (Partner Hub) ----------
+  if (session && role === 'seller') {
+    let sbody;
+    if (shopLoading) {
+      sbody = <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={BLUE} /></View>;
+    } else if (myShop) {
+      sbody = <SellerApp shop={myShop} setShop={setMyShop} lang={lang} onLang={onLang} onLogout={logout} />;
+    } else {
+      sbody = <SellerSetupScreen defaultArea={loc && loc.area ? loc.area : ''} onCreated={(sh) => setMyShop(sh)}
+        onLogout={logout} loadErr={shopErr} />;
+    }
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+        <View style={{ flex: 1, backgroundColor: BG }}>{sbody}</View>
+      </SafeAreaView>
+    );
+  }
+
+  // ---------- buyer ----------
   const cartCount = cart && cart.items ? Object.keys(cart.items).length : 0;
-  let body;
+  const offerCount = shops.filter(isOfferLive).length;
+  let body = null;
   if (done) {
     body = <Success done={done} onTrack={() => { setDone(null); setTab('orders'); }}
       onHome={() => { setDone(null); setTab('home'); }} />;
+  } else if (page === 'notif') {
+    body = <BuyerNotifications session={session} shops={shops} products={products} needLogin={needLogin}
+      onShop={openShop} onProduct={openProduct} onOrders={() => pick('orders')} onBack={() => setPage(null)} />;
+  } else if (page === 'khata') {
+    body = <BuyerKhata session={session} onBack={() => setPage(null)} />;
+  } else if (page === 'support') {
+    body = <SupportPage onBack={() => setPage(null)} />;
+  } else if (page === 'addr') {
+    body = <AddressPage profile={profile} onSave={saveProfile} loc={loc} onLoc={() => setLocOpen(true)}
+      onBack={() => setPage(null)} />;
   } else if (shopSel) {
-    body = <ShopScreen key={shopSel.id} shop={shopSel} focusId={focusId} cart={cart}
+    body = <ShopScreen key={shopSel.id + ':' + (focusId || '')} shop={shopSel} focusId={focusId} cart={cart}
+      profile={profile} onAdd={addToCart}
       onBack={() => { setShopSel(null); setFocusId(null); }}
-      onAdd={addToCart}
-      onCart={() => { setShopSel(null); setTab('cart'); }} />;
+      onCart={() => { setShopSel(null); setFocusId(null); setTab('cart'); }} />;
   } else if (tab === 'home') {
     body = <Home shops={shops} products={products} loading={loading} err={err} loc={loc}
-      onLoc={() => setLocOpen(true)} onShop={openShop} onProduct={openProduct} onReload={loadAll}
-      onMenu={() => setTab('cats')}
-      onBell={() => Alert.alert(trs('Notification'), trs('Coming soon'))}
-      onProfile={() => setTab('profile')} onCats={() => setTab('cats')}
-      onCat={(k) => { setCatInit(k); setTab('cats'); }} />;
+      onLoc={() => setLocOpen(true)} onShop={openShop} onProduct={openProduct} onReload={loadData}
+      onMenu={() => pick('profile')} onBell={() => setPage('notif')} onProfile={() => pick('profile')}
+      onCats={() => pick('cats')} onCat={openCat} bellCount={offerCount} />;
   } else if (tab === 'cats') {
     body = <Categories shops={shops} onShop={openShop} initial={catInit} clearInitial={() => setCatInit(null)} />;
   } else if (tab === 'cart') {
-    body = <CartScreen cart={cart} setCart={setCart} session={session} needLogin={() => setAuthRole('buyer')}
-      profile={profile} setProfile={setProfile}
-      syncProfile={() => { if (SESSION) syncRemote(profile, loc).catch(() => {}); }}
-      onDone={(d) => { setDone(d); setCart(null); loadAll(); }} />;
+    body = <CartScreen cart={cart} setCart={setCart} session={session} needLogin={needLogin} onDone={onOrderDone}
+      profile={profile} setProfile={setProfile} syncProfile={syncProfile} />;
   } else if (tab === 'orders') {
-    body = <BuyerOrders session={session} needLogin={() => setAuthRole('buyer')} onReorder={reorder} />;
+    body = <BuyerOrders session={session} needLogin={needLogin} onReorder={reorder} />;
   } else {
-    body = <Profile session={session} needLogin={() => setAuthRole('buyer')}
-      onPartner={() => setAuthRole('seller')} onLogout={logout} onOrders={() => setTab('orders')}
-      lang={lang} onLang={() => setLangPick(true)} profile={profile} onSaveProfile={saveProfile}
-      loc={loc} onLoc={() => setLocOpen(true)} />;
+    body = <Profile session={session} needLogin={needLogin} onPartner={() => setAuthRole('seller')}
+      onLogout={logout} onOrders={() => pick('orders')} lang={lang} onLang={onLang} profile={profile}
+      loc={loc} onLoc={() => setLocOpen(true)} onAddr={() => setPage('addr')}
+      onSupport={() => setPage('support')} onNotif={() => setPage('notif')} onKhata={() => setPage('khata')} />;
   }
-  const showTabs = !done && !shopSel;
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BLUE }}>
-      <StatusBar barStyle="light-content" backgroundColor={BLUE} />
-      <View style={{ flex: 1, backgroundColor: BG }}>
-        <View style={{ flex: 1 }}>{body}</View>
-        {showTabs && (
-          <TabBar
-            cur={tab}
-            onPick={goTab}
-            tabs={[
-              ['home', '🏠', 'Home'],
-              ['cats', '🗂️', 'Categories'],
-              ['cart', '🛒', 'Cart', cartCount > 0 ? cartCount : null],
-              ['orders', '📦', 'Orders'],
-              ['profile', '👤', 'Profile'],
-            ]}
-          />
-        )}
-      </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <View style={{ flex: 1, backgroundColor: BG }}>{body}</View>
+      {!done && (
+        <TabBar cur={tab} onPick={pick} tabs={[
+          ['home', '🏠', 'Home'],
+          ['cats', '🗂️', 'Categories'],
+          ['cart', '🛒', 'Cart', cartCount > 0 ? cartCount : null],
+          ['orders', '📦', 'Orders'],
+          ['profile', '👤', 'Profile'],
+        ]} />
+      )}
       {locOpen && <LocSheet loc={loc} onClose={() => setLocOpen(false)} onSave={saveLoc} />}
     </SafeAreaView>
   );
@@ -4147,105 +5589,100 @@ if (recovery) {
 // STYLES
 // ======================================================================
 const s = StyleSheet.create({
-  rowB: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  head: { backgroundColor: BLUE, padding: 16,
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 12 : 16 },
-  headT: { color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 8 },
-  hello: { color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 14 },
-  card: { backgroundColor: '#fff', borderRadius: 18, padding: 14, marginHorizontal: 14, marginTop: 12,
-    borderWidth: 1, borderColor: LINE },
-  h: { fontSize: 17, fontWeight: '800', color: INK, marginBottom: 8 },
-  sub: { color: MUTE, fontSize: 12 },
-  label: { color: MUTE, fontSize: 12, fontWeight: '700', marginBottom: 4 },
-  input: { borderWidth: 1, borderColor: LINE, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10,
-    fontSize: 15, color: INK, backgroundColor: '#fff', marginBottom: 8 },
   btn: { backgroundColor: BLUE, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16,
     alignItems: 'center', justifyContent: 'center', minHeight: 46 },
-  btnS: { paddingVertical: 7, paddingHorizontal: 14, minHeight: 34, borderRadius: 10 },
+  btnS: { paddingVertical: 8, paddingHorizontal: 12, minHeight: 36, borderRadius: 12 },
   btnO: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: BLUE },
   btnR: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: RED },
   btnT: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#fff',
-    borderWidth: 1, borderColor: LINE, marginRight: 8, marginBottom: 8 },
+  label: { fontSize: 12, color: MUTE, fontWeight: '700', marginBottom: 4 },
+  input: { borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 12,
+    paddingVertical: 10, fontSize: 15, color: INK, marginBottom: 8 },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 18, backgroundColor: '#fff', borderWidth: 1,
+    borderColor: LINE, marginRight: 8, marginBottom: 8 },
   chipOn: { backgroundColor: BLUE, borderColor: BLUE },
-  chipT: { color: INK, fontWeight: '700', fontSize: 13 },
-  tag: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10,
-    fontSize: 12, fontWeight: '800', overflow: 'hidden' },
+  tag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, fontSize: 12, fontWeight: '700',
+    overflow: 'hidden', alignSelf: 'flex-start' },
   tagS: { fontSize: 10, paddingHorizontal: 6, paddingVertical: 2 },
-  msg: { marginHorizontal: 14, marginTop: 10, padding: 10, borderRadius: 12 },
-  mrow: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
-  mrowLine: { borderBottomWidth: 1, borderBottomColor: LINE },
-  mic: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  shopN: { fontSize: 15, fontWeight: '800', color: INK },
-  overlay: { flex: 1, backgroundColor: 'rgba(10,20,50,0.45)' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18,
-    paddingBottom: 28 },
-  grab: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: '#d5dcea',
-    marginBottom: 12 },
-  shopCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 18,
-    padding: 12, marginBottom: 10, borderWidth: 1, borderColor: LINE },
+  msg: { padding: 12, borderRadius: 12, marginVertical: 6 },
+  head: { backgroundColor: BLUE, paddingTop: (Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 12) + 8,
+    paddingHorizontal: 16, paddingBottom: 16 },
+  headT: { color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 8 },
+  rowB: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  card: { backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: LINE, padding: 14,
+    marginHorizontal: 14, marginTop: 12 },
+  h: { fontSize: 17, fontWeight: '800', color: INK, marginBottom: 8 },
+  sub: { fontSize: 12.5, color: MUTE },
+  shopN: { fontSize: 16, fontWeight: '800', color: INK },
+  link: { color: BLUE, fontWeight: '700' },
+  empty: { textAlign: 'center', color: MUTE, padding: 24, fontSize: 15 },
+  price: { fontWeight: '800', color: INK, fontSize: 15 },
   offer: { color: ORANGE, fontWeight: '700', marginTop: 4, fontSize: 12 },
-  mini: { width: '48.5%', backgroundColor: '#fff', borderRadius: 16, padding: 10, marginBottom: 10,
-    borderWidth: 1, borderColor: LINE },
+  shopCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 18,
+    borderWidth: 1, borderColor: LINE, padding: 12, marginBottom: 10 },
+  mini: { width: '48.5%', backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: LINE,
+    padding: 10, marginBottom: 10 },
   miniN: { fontSize: 14, fontWeight: '800', color: INK },
   arrow: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#e8f0ff', alignItems: 'center',
     justifyContent: 'center' },
+  pcard: { width: '48.5%', backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: LINE,
+    padding: 10, marginBottom: 10 },
+  tile: { width: '23%', paddingVertical: 12, borderRadius: 16, alignItems: 'center', marginBottom: 10 },
+  tileT: { fontSize: 11, fontWeight: '700', color: INK, marginTop: 4 },
+  banner: { marginHorizontal: 14, marginTop: 12, backgroundColor: '#e3f4e8', flexDirection: 'row',
+    alignItems: 'center', borderRadius: 20, padding: 18 },
+  hello: { color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 14 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14,
+    paddingHorizontal: 12, marginTop: 14, gap: 8, height: 48 },
+  searchIn: { flex: 1, fontSize: 14, color: INK, paddingVertical: 8 },
   avatarS: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center', justifyContent: 'center' },
-  searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14,
-    paddingHorizontal: 12, marginTop: 14, gap: 8 },
-  searchIn: { flex: 1, paddingVertical: 11, fontSize: 14, color: INK },
-  link: { color: BLUE, fontWeight: '700', fontSize: 13 },
-  tile: { width: '23%', aspectRatio: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
-    marginBottom: 10 },
-  tileT: { fontSize: 10, fontWeight: '700', color: INK, marginTop: 4 },
-  banner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e9f1ff', borderRadius: 18,
-    padding: 16, marginHorizontal: 14, marginTop: 12 },
-  empty: { color: MUTE, textAlign: 'center', padding: 20 },
-  pcard: { width: '48.5%', backgroundColor: '#fff', borderRadius: 16, padding: 10, marginBottom: 10,
-    borderWidth: 1, borderColor: LINE },
-  price: { color: GREEN, fontWeight: '800', fontSize: 15 },
-  prow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
-  cartBar: { position: 'absolute', left: 14, right: 14, bottom: 14, backgroundColor: GREEN, borderRadius: 16,
-    padding: 16, flexDirection: 'row', justifyContent: 'space-between' },
-  cartBarT: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  totalBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: BG, borderRadius: 14, padding: 12, marginVertical: 12 },
-  okOuter: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#d9f3e3', alignItems: 'center',
-    justifyContent: 'center' },
-  okInner: { width: 84, height: 84, borderRadius: 42, backgroundColor: GREEN, alignItems: 'center',
-    justifyContent: 'center' },
-  dot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#c3cde2',
-    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  profTop: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18, backgroundColor: '#fff' },
-  avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: BLUE, alignItems: 'center',
-    justifyContent: 'center' },
-  bizCard: { borderRadius: 24, marginHorizontal: 14, marginTop: 14, padding: 20 },
-  bizTitle: { fontSize: 25, fontWeight: '800', color: INK, lineHeight: 31 },
-  bizText: { fontSize: 15, color: INK, marginTop: 8, lineHeight: 21 },
-  bizBtn: { backgroundColor: '#fff', borderRadius: 18, minHeight: 56, marginTop: 16, flexDirection: 'row',
-    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  bizBtnT: { color: BLUE, fontSize: 18, fontWeight: '800' },
-  pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
-  adBox: { backgroundColor: BLUE, borderRadius: 14, padding: 14, marginBottom: 10 },
-  billRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1,
-    borderTopColor: LINE },
-  sdot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#c3cde2',
-    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  abtn: { width: '48.5%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 12, borderRadius: 12, borderWidth: 1.5, marginBottom: 8 },
-  thead: { flexDirection: 'row', backgroundColor: '#eef3ff', paddingVertical: 8, paddingHorizontal: 6,
-    borderRadius: 10 },
-  th: { fontSize: 11, fontWeight: '800', color: MUTE },
-  trow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 6,
-    borderBottomWidth: 1, borderBottomColor: LINE },
-  tabbar: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: LINE,
-    paddingVertical: 6 },
-  tab: { flex: 1, alignItems: 'center', paddingVertical: 4 },
-  tabT: { fontSize: 10, color: MUTE, marginTop: 2, fontWeight: '600' },
-  badge: { position: 'absolute', top: -4, right: -10, minWidth: 18, height: 18, borderRadius: 9,
+  badge: { position: 'absolute', top: -6, right: -8, minWidth: 18, height: 18, borderRadius: 9,
     backgroundColor: RED, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   badgeT: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  alertBar: { backgroundColor: GREEN, padding: 12, flexDirection: 'row', justifyContent: 'space-between',
+  mic: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  mrow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
+  mrowLine: { borderBottomWidth: 1, borderBottomColor: LINE },
+  tileCard: { width: '48.5%', backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, padding: 14,
+    marginBottom: 10 },
+  camBadge: { position: 'absolute', right: -4, bottom: -4, width: 26, height: 26, borderRadius: 13,
+    backgroundColor: '#fff', borderWidth: 1, borderColor: LINE, alignItems: 'center', justifyContent: 'center' },
+  overlay: { flex: 1, backgroundColor: 'rgba(10,20,50,0.45)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18,
+    paddingBottom: 28, maxHeight: '90%' },
+  grab: { width: 44, height: 5, borderRadius: 3, backgroundColor: '#cfd6e4', alignSelf: 'center',
+    marginBottom: 12 },
+  totalBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: BG, borderRadius: 14, padding: 12, marginVertical: 12 },
+  prow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+  cartBar: { position: 'absolute', left: 14, right: 14, bottom: 12, backgroundColor: GREEN, borderRadius: 16,
+    padding: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cartBarT: { color: '#fff', fontWeight: '800' },
+  okOuter: { width: 110, height: 110, borderRadius: 55, backgroundColor: '#c9f0d8', alignItems: 'center',
+    justifyContent: 'center' },
+  okInner: { width: 80, height: 80, borderRadius: 40, backgroundColor: GREEN, alignItems: 'center',
+    justifyContent: 'center' },
+  dot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#cfd6e4', backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center' },
+  sdot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#cfd6e4',
+    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  abtn: { width: '48.5%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 12, borderRadius: 14, borderWidth: 1.5, marginBottom: 10 },
+  adBox: { backgroundColor: BLUE, borderRadius: 14, padding: 14, marginVertical: 10 },
+  billRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1,
+    borderTopColor: LINE },
+  thead: { flexDirection: 'row', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: LINE },
+  th: { fontSize: 11, fontWeight: '800', color: MUTE },
+  trow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, borderBottomWidth: 1,
+    borderBottomColor: LINE },
+  pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
+  sec: { marginHorizontal: 14, marginTop: 14, marginBottom: 6 },
+  alertBar: { backgroundColor: ORANGE, padding: 12, flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'center' },
+  tabbar: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: LINE,
+    paddingTop: 6, paddingBottom: 10 },
+  tab: { flex: 1, alignItems: 'center' },
+  tabT: { fontSize: 10, color: MUTE, marginTop: 2 },
 });
+
+
