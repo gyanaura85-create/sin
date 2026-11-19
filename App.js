@@ -4821,7 +4821,7 @@ function SellerSubscription({ shop, setShop, onClose }) {
   }, [shop.id]);
   useEffect(() => { load(); }, [load]);
   const payNow = async () => {
-    const clean = utr.trim().replace(/\\s+/g, '').toUpperCase();
+    const clean = utr.trim().replace(/\s+/g, '').toUpperCase();
     if (!/^[A-Z0-9]{6,32}$/.test(clean)) { setMsg('Enter the UTR / transaction reference from your UPI payment.'); return; }
     setBusy(true); setMsg('');
     try {
