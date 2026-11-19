@@ -2522,6 +2522,8 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
   if (dtype === 'delivery' && !deliverySlot) { feeState = 'error'; feeBad = 'Home delivery orders can be placed between 6:00 AM and 12:00 AM IST.'; }
   if (dtype === 'pickup') {
     feeState = 'pickup';
+  } else if (!deliverySlot) {
+    feeState = 'error'; feeBad = 'Home delivery orders can be placed between 6:00 AM and 12:00 AM IST.';
   } else if (feesError) {
     feeState = 'error'; feeBad = feesError;
   } else if (!feesReady) {
@@ -2702,6 +2704,7 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
           <Text style={s.h}>Total payable</Text>
           <Text style={s.h}>{money(orderTotal)}</Text>
         </View>
+        {dtype === 'delivery' && !!deliverySlot && <Text style={[s.sub,{marginTop:6}]}>Delivery charge is calculated automatically from the selected delivery area and order placement time ({deliverySlot}, IST).</Text>}
         {feeUnknown && <Text style={[s.sub, { marginTop: 6 }]}>Any delivery charge of this shop is added when the order is placed. The final amount is confirmed on the order.</Text>}
         {feeState === 'loading' && <ActivityIndicator color={BLUE} style={{ marginTop: 8 }} />}
         {feeState === 'address' && <Text style={[s.sub, { marginTop: 6 }]}>This shop charges delivery by area. Enter your full address below to see the delivery charge.</Text>}
