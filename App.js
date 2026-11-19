@@ -5280,20 +5280,14 @@ function SellerFees({ shop, onBack }) {
 // NEARKART BRAND SPLASH — short premium marketplace reveal
 // ======================================================================
 function NearKartSplash() {
-  const logoScale = useRef(new Animated.Value(0.86)).current;
-  const logoOpacity = useRef(new Animated.Value(0)).current;
   const letterValues = useRef("NEAR KART".split("").map(() => new Animated.Value(0))).current;
   const taglineOpacity = useRef(new Animated.Value(0)).current;
   const taglineY = useRef(new Animated.Value(7)).current;
 
   useEffect(() => {
     Animated.sequence([
-      Animated.parallel([
-        Animated.spring(logoScale, { toValue: 1, friction: 7, tension: 65, useNativeDriver: true }),
-        Animated.timing(logoOpacity, { toValue: 1, duration: 420, useNativeDriver: true }),
-      ]),
-      Animated.stagger(78, letterValues.map((v) =>
-        Animated.timing(v, { toValue: 1, duration: 230, useNativeDriver: true })
+      Animated.stagger(85, letterValues.map((v) =>
+        Animated.timing(v, { toValue: 1, duration: 260, useNativeDriver: true })
       )),
       Animated.parallel([
         Animated.timing(taglineOpacity, { toValue: 1, duration: 420, useNativeDriver: true }),
@@ -5303,28 +5297,26 @@ function NearKartSplash() {
   }, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f6f8fc', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f6f8fc" />
-      <Animated.Image source={require('./1795078951005.png')}
-        resizeMode="contain"
-        style={{ width: 148, height: 148, opacity: logoOpacity, transform: [{ scale: logoScale }] }} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 20 }}>
+    <View style={{ flex: 1, backgroundColor: '#073DBB', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+      <StatusBar barStyle="light-content" backgroundColor="#073DBB" />
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
         {"NEAR KART".split("").map((letter, index) => (
           <Animated.Text key={index} style={{
-            color: '#0b4fc2', fontSize: 27, fontWeight: '900', letterSpacing: 1.1,
+            color: index < 4 ? '#FFFFFF' : '#FF9418',
+            fontSize: 34, fontWeight: '900', letterSpacing: 1.2,
             opacity: letterValues[index],
-            transform: [{ translateY: letterValues[index].interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
+            transform: [{ translateY: letterValues[index].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
           }}>{letter === ' ' ? '\u00a0' : letter}</Animated.Text>
         ))}
       </View>
-      <Animated.Text style={{ marginTop: 12, color: '#5b6a86', fontSize: 10, fontWeight: '800',
+      <Animated.Text style={{ marginTop: 14, color: '#EAF1FF', fontSize: 10, fontWeight: '800',
         letterSpacing: 2.1, opacity: taglineOpacity, transform: [{ translateY: taglineY }],
         textAlign: 'center' }}>
         YOUR NEIGHBOURHOOD, YOUR MARKETPLACE
       </Animated.Text>
       <View style={{ position: 'absolute', bottom: 42, alignItems: 'center' }}>
-        <View style={{ width: 34, height: 3, borderRadius: 3, backgroundColor: '#dbe3f3', overflow: 'hidden' }}>
-          <View style={{ width: 18, height: 3, borderRadius: 3, backgroundColor: '#0b4fc2' }} />
+        <View style={{ width: 42, height: 3, borderRadius: 3, backgroundColor: '#315BB8', overflow: 'hidden' }}>
+          <View style={{ width: 22, height: 3, borderRadius: 3, backgroundColor: '#FF9418' }} />
         </View>
       </View>
     </View>
