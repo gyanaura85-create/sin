@@ -3082,14 +3082,19 @@ function NoteCard({ ic, bg, title, text, time, onPress, right }) {
 }
 function BuyerNotifications({ session, shops, products, needLogin, onShop, onProduct, onOrders, onBack }) {
   const [os, setOs] = useState([]);
+  const [khataReminders, setKhataReminders] = useState([]);
   const [ld, setLd] = useState(false);
   const [rateO, setRateO] = useState(null);
   const [reviews, , addReview] = useMyReviews(session);
   const load = useCallback(() => {
-    if (!session) { setOs([]); return; }
+    if (!session) { setOs([]); setKhataReminders([]); return; }
     setLd(true);
     rpc('get_my_orders_paginated', { p_limit: 10, p_offset: 0 })
-      .then((r) => setOs(unwrapList(r).map(normOrder))).catch(() => {}).finally(() => setLd(false));
+      .then((r) => setOs(unwrapList(r).map(normOrder))).catch(() => {});
+    api('/rest/v1/notifications?type=eq.khata_payment_reminder&select=id,title,body,data,created_at,is_read&order=created_at.desc&limit=20')
+      .then((r) => setKhataReminders(Array.isArray(r) ? r : []))
+      .catch(() => setKhataReminders([]))
+      .finally(() => setLd(false));
   }, [session]);
   useEffect(() => { load(); }, [load]);
   const offers = shops.filter((x) => x.offer);
@@ -3097,11 +3102,23 @@ function BuyerNotifications({ session, shops, products, needLogin, onShop, onPro
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, 8);
   const toRate = os.filter((o) => o.status === 'delivered' && !reviews[o.id]);
   const ICON = { new: '🧾', accepted: '✅', preparing: '👨‍🍳', ready: '🛍️', on_the_way: '🛵', delivered: '🎉', cancelled: '❌' };
-  const empty = !offers.length && !newest.length && !os.length;
+  const empty = !offers.length && !newest.length && !os.length && !khataReminders.length;
   return (
     <View style={{ flex: 1 }}>
       <ScrollView style={{ backgroundColor: BG }} refreshControl={<RefreshControl refreshing={ld} onRefresh={load} />}>
-        <Head title="Notifications" sub="Orders, offers and new products" onBack={onBack} color={PINK} />
+        <Head title="Notifications" sub="Orders, offers, new products and Khata reminders" onBack={onBack} color={PINK} />
+
+        {khataReminders.length > 0 && (
+          <View>
+            <Text style={[s.h, s.sec]}>📒 Khata payment reminders</Text>
+            {khataReminders.map((n) => (
+              <NoteCard key={n.id} ic="📒" bg="#fff8e6"
+                title={n.title || 'Khata payment reminder'}
+                text={n.body || 'Your Khata payment is due.'}
+                time={when(n.created_at)} />
+            ))}
+          </View>
+        )}
 
         {toRate.length > 0 && (
           <View>
