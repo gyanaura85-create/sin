@@ -2627,7 +2627,9 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
       const number = r && typeof r === 'object' ? (r.order_number || (r.order && r.order.order_number)) : null;
       // the SERVER is the authority: use its final amount / fee when the response carries them
       const srvTotal = r && typeof r === 'object' ? Number(r.total_amount !== undefined && r.total_amount !== null ? r.total_amount : (r.order && r.order.total_amount)) : NaN;
-      const srvFee = r && typeof r === 'object' ? Number(r.delivery_fee !== undefined && r.delivery_fee !== null ? r.delivery_fee : (r.order && r.order.delivery_fee)) : NaN;
+      // Trust a server fee only when the response includes the final time slot; older RPC output contains the pre-trigger legacy fee.
+      const hasFinalSlot = !!(r && typeof r === 'object' && (r.delivery_slot || (r.order && r.order.delivery_slot)));
+      const srvFee = hasFinalSlot ? Number(r.delivery_fee !== undefined && r.delivery_fee !== null ? r.delivery_fee : (r.order && r.order.delivery_fee)) : NaN;
       const paid = Number.isFinite(srvTotal) && srvTotal > 0 ? srvTotal : orderTotal;
       const paidFee = Number.isFinite(srvFee) && srvFee >= 0 ? srvFee : deliveryFee;
       const amtMsg = Math.abs(paid - orderTotal) > 0.01
@@ -2656,6 +2658,8 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
       }
       if (syncProfile) syncProfile();
       onDone({ id: String(id), number, shop: cart.shop, items, total: paid, subtotal: total, deliveryFee: dtype === 'pickup' ? 0 : paidFee,
+        deliveryArea: dtype === 'delivery' ? (r && r.delivery_area ? r.delivery_area : (areaHit && areaHit.area ? areaHit.area : '')) : '',
+        deliverySlot: dtype === 'delivery' ? (r && r.delivery_slot ? r.delivery_slot : deliverySlot) : '',
         pay, pickup: dtype === 'pickup', utr: pay === 'upi' ? utr.trim() : '', utrMsg, khataMsg, amtMsg });
     } catch (e) { setMsg(orderErrMsg(e)); lock.current = false; }
     setBusy(false);
@@ -2787,6 +2791,8 @@ function Success({ done, onTrack, onHome }) {
         {done.subtotal !== undefined && (
           <View style={{ marginBottom: 6 }}>
             <View style={s.rowB}><Text style={s.sub}>Subtotal</Text><RNText style={{ color: INK, fontWeight: '700' }}>{money(done.subtotal)}</RNText></View>
+            {!!done.deliveryArea && <View style={s.rowB}><Text style={s.sub}>Delivery area</Text><RNText style={{ color: INK, fontWeight: '700' }}>{done.deliveryArea}</RNText></View>}
+            {!!done.deliverySlot && <View style={s.rowB}><Text style={s.sub}>Order-time slot (IST)</Text><RNText style={{ color: INK, fontWeight: '700' }}>{done.deliverySlot}</RNText></View>}
             <View style={[s.rowB, { marginTop: 2 }]}><Text style={s.sub}>Delivery charge</Text><RNText style={{ color: INK, fontWeight: '700' }}>{money(done.deliveryFee || 0)}</RNText></View>
           </View>
         )}
