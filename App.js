@@ -134,8 +134,8 @@ const KHATA = {
   shopAccounts: (shopId) => ['khata_shop_accounts', { p_shop_id: shopId }],
   decide: (accId, ok) => ['khata_decide', { p_account: accId, p_approve: ok }],
   setLimit: (accId, v) => ['khata_set_credit_limit', { p_account: accId, p_limit: v }],
-  record: (accId, v, note) => ['khata_record_payment', { p_account_id: accId, p_amount: v, p_note: note || null }],
-  ledger: (accId) => ['khata_ledger', { p_account_id: accId }],
+  record: (accId, v, note) => ['khata_record_payment', { p_account: accId, p_amount: v, p_note: note || null }],
+  ledger: (accId) => ['khata_ledger', { p_account: accId }],
   myAccounts: () => ['khata_my_accounts', {}],
   setReminder: (accId, dueAt, note) => ['khata_set_reminder', { p_account: accId, p_due_at: dueAt, p_note: note || null }],
 };
