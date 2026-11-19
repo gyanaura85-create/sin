@@ -1599,7 +1599,7 @@ function PrivacyPolicyPage({ onBack, color }) {
         {section('10. Changes to this policy',
           'We may update this policy when app features or legal requirements change. The latest in-app version will show its updated date.')}
         {section('11. Contact NearKart',
-          'For privacy questions, data correction or deletion requests, contact supportnearkart@gmail.com or call +91 8144937920.')}
+          'For privacy questions, data correction or deletion requests, contact ssupportnearkert@gmail.com or call +91 8144937920.')}
         <View style={{ backgroundColor: '#fff4df', borderRadius: 12, padding: 12, marginTop: 2 }}>
           <Text style={{ color: '#80520b', fontSize: 12, lineHeight: 18 }}>
             This in-app policy is an initial notice based on the current app features. Before publishing, NearKart must also host this policy on a public webpage and verify that every statement matches the live app, backend configuration and actual data practices.
