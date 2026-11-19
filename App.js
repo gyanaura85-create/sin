@@ -4096,7 +4096,7 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
           title="All Products"
           color={PURPLE}
           sub={products.length + ' products in total'}
-          right={<Btn small kind="w" t="+ Add Product" onPress={() => { setEdit(null); setAddOpen(true); }} />}
+          right={<Btn small kind="w" t="+ Add Product" onPress={() => { if (!canManage) { onRequireSubscription(); return; } setEdit(null); setAddOpen(true); }} />}
         />
         <Msg t={msg} ok={msg.startsWith('✅')} />
         <Msg t={perr} />
