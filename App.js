@@ -5348,7 +5348,8 @@ export default function App() {
   const [locOpen, setLocOpen] = useState(false);
   const [shops, setShops] = useState([]);
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);\n  const [startupReady, setStartupReady] = useState(false);\n  const [splashMinDone, setSplashMinDone] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [startupReady, setStartupReady] = useState(false);\n  const [splashMinDone, setSplashMinDone] = useState(false);
   const [err, setErr] = useState('');
   const [cart, setCart] = useState(null);
   const [tab, setTab] = useState('home');
@@ -5454,11 +5455,14 @@ export default function App() {
           try { await enterSession(sess, false, false); } catch (e) { /* session kept, user can retry */ }
         }
       }
-    };\n    boot().finally(() => setStartupReady(true));
+    };
+    boot().finally(() => setStartupReady(true));
     return () => { ON_EXPIRED = null; };
   }, []);
 
-  useEffect(() => {\n    const t = setTimeout(() => setSplashMinDone(true), 2600);\n    return () => clearTimeout(t);\n  }, []);\n\n  // ---------- password reset deep link ----------
+  useEffect(() => {\n    const t = setTimeout(() => setSplashMinDone(true), 2600);\n    return () => clearTimeout(t);\n  }, []);
+
+  // ---------- password reset deep link ----------
   useEffect(() => {
     if (!ExLink) return undefined;
     const handle = async (url) => {
