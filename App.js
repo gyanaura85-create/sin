@@ -5278,6 +5278,61 @@ function SellerFees({ shop, onBack }) {
 
 
 // ======================================================================
+// NEARKART BRAND SPLASH — short premium marketplace reveal
+// ======================================================================
+function NearKartSplash() {
+  const logoScale = useRef(new Animated.Value(0.86)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const letterValues = useRef("NEAR KART".split("").map(() => new Animated.Value(0))).current;
+  const taglineOpacity = useRef(new Animated.Value(0)).current;
+  const taglineY = useRef(new Animated.Value(7)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.spring(logoScale, { toValue: 1, friction: 7, tension: 65, useNativeDriver: true }),
+        Animated.timing(logoOpacity, { toValue: 1, duration: 420, useNativeDriver: true }),
+      ]),
+      Animated.stagger(78, letterValues.map((v) =>
+        Animated.timing(v, { toValue: 1, duration: 230, useNativeDriver: true })
+      )),
+      Animated.parallel([
+        Animated.timing(taglineOpacity, { toValue: 1, duration: 420, useNativeDriver: true }),
+        Animated.timing(taglineY, { toValue: 0, duration: 420, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, []);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#f6f8fc', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#f6f8fc" />
+      <Animated.Image source={require('./file_00000000fdfc820a91a9d1a52599f241.png')}
+        resizeMode="contain"
+        style={{ width: 148, height: 148, opacity: logoOpacity, transform: [{ scale: logoScale }] }} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 20 }}>
+        {"NEAR KART".split("").map((letter, index) => (
+          <Animated.Text key={index} style={{
+            color: '#0b4fc2', fontSize: 27, fontWeight: '900', letterSpacing: 1.1,
+            opacity: letterValues[index],
+            transform: [{ translateY: letterValues[index].interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
+          }}>{letter === ' ' ? '\u00a0' : letter}</Animated.Text>
+        ))}
+      </View>
+      <Animated.Text style={{ marginTop: 12, color: '#5b6a86', fontSize: 10, fontWeight: '800',
+        letterSpacing: 2.1, opacity: taglineOpacity, transform: [{ translateY: taglineY }],
+        textAlign: 'center' }}>
+        YOUR NEIGHBOURHOOD, YOUR MARKETPLACE
+      </Animated.Text>
+      <View style={{ position: 'absolute', bottom: 42, alignItems: 'center' }}>
+        <View style={{ width: 34, height: 3, borderRadius: 3, backgroundColor: '#dbe3f3', overflow: 'hidden' }}>
+          <View style={{ width: 18, height: 3, borderRadius: 3, backgroundColor: '#0b4fc2' }} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ======================================================================
 // ROOT APP
 // (no splash screen, no language screen at launch - language is chosen only in Profile)
 // ======================================================================
@@ -5293,7 +5348,7 @@ export default function App() {
   const [locOpen, setLocOpen] = useState(false);
   const [shops, setShops] = useState([]);
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);\n  const [startupReady, setStartupReady] = useState(false);\n  const [splashMinDone, setSplashMinDone] = useState(false);
   const [err, setErr] = useState('');
   const [cart, setCart] = useState(null);
   const [tab, setTab] = useState('home');
@@ -5383,7 +5438,7 @@ export default function App() {
         });
       } catch (e) { /* notifications are optional */ }
     }
-    (async () => {
+    const boot = async () => {
       // saved language (default English). The language screen is never shown at launch.
       const sl = await store.get('lang');
       if (sl && TR[sl]) { LANG = sl; setLangState(sl); }
@@ -5399,11 +5454,11 @@ export default function App() {
           try { await enterSession(sess, false, false); } catch (e) { /* session kept, user can retry */ }
         }
       }
-    })();
+    };\n    boot().finally(() => setStartupReady(true));
     return () => { ON_EXPIRED = null; };
   }, []);
 
-  // ---------- password reset deep link ----------
+  useEffect(() => {\n    const t = setTimeout(() => setSplashMinDone(true), 2600);\n    return () => clearTimeout(t);\n  }, []);\n\n  // ---------- password reset deep link ----------
   useEffect(() => {
     if (!ExLink) return undefined;
     const handle = async (url) => {
@@ -5515,7 +5570,7 @@ export default function App() {
   // ======================================================================
 
   // language screen: only when the user taps Language inside Profile (or seller More)
-  if (showLang) {
+  if (!startupReady || !splashMinDone) return <NearKartSplash />;\n\n  if (showLang) {
     return (
       <LangScreen current={lang} onPick={changeLang} onClose={() => setShowLang(false)} />
     );
