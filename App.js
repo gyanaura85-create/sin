@@ -9,6 +9,8 @@
  *   (expo-crypto + expo-linking are needed for Forgot Password, expo-notifications + expo-device for push)
  *
  * NEW IN THIS VERSION
+ *  - Custom splash screen removed (set the native splash image in app.json).
+ *  - Language selection is available ONLY inside Profile (no language screen at app launch).
  *  - Seller can upload SHOP PROFILE PHOTO from gallery (More -> tap the photo, or Manage Your Shop)
  *  - Seller can upload PRODUCT PHOTO from gallery (photo link field removed). Buyers see the photo.
  *  - A seller can sell MANY categories in one shop. Categories are saved in shops.category as "Grocery,Fashion".
@@ -106,7 +108,6 @@ import {
 // ======================================================================
 const URL_ = 'https://mfdiicegsgbcbvyeuxgi.supabase.co';
 const KEY = 'sb_publishable_I_ypFDUGPQdtct0U5FMhAQ_02rIepBx';
-const SPLASH_MS = 2600; // splash screen time (milliseconds)
 const PAGE = 20;        // buyer orders page size
 const SPAGE = 20;       // seller orders page size
 const SUPPORT_EMAIL = 'ssupportnearkert@gmail.com';
@@ -1610,52 +1611,6 @@ function SupportPage({ onBack, color }) {
 }
 
 // ======================================================================
-// SPLASH SCREEN (matches the NearKart design)
-// ======================================================================
-function Splash() {
-  const SKY = '#eaf3ff';
-  return (
-    <View style={{ flex: 1, backgroundColor: SKY, alignItems: 'center', justifyContent: 'center',
-      overflow: 'hidden' }}>
-      <StatusBar barStyle="dark-content" backgroundColor={SKY} />
-
-      {/* top-left blue / green corner */}
-      <View style={{ position: 'absolute', top: -120, left: -150, width: 420, height: 230,
-        backgroundColor: DARK, transform: [{ rotate: '-30deg' }] }} />
-      <View style={{ position: 'absolute', top: -92, left: -120, width: 460, height: 12,
-        backgroundColor: '#4caf50', transform: [{ rotate: '-30deg' }] }} />
-      {/* bottom-right blue / green corner */}
-      <View style={{ position: 'absolute', bottom: -120, right: -150, width: 420, height: 230,
-        backgroundColor: DARK, transform: [{ rotate: '-30deg' }] }} />
-      <View style={{ position: 'absolute', bottom: -92, right: -120, width: 460, height: 12,
-        backgroundColor: '#4caf50', transform: [{ rotate: '-30deg' }] }} />
-
-      {/* logo */}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
-        <View style={{ alignItems: 'center' }}>
-          <View style={{ width: 44, height: 34, borderWidth: 7, borderColor: '#2f6fc9', borderBottomWidth: 0,
-            borderTopLeftRadius: 22, borderTopRightRadius: 22, marginBottom: -12 }} />
-          <View style={{ width: 96, height: 104, borderRadius: 16, backgroundColor: '#2f6fc9',
-            borderWidth: 4, borderColor: '#9fc2f2', alignItems: 'center', justifyContent: 'center' }}>
-            <RNText style={{ color: '#fff', fontSize: 62, fontWeight: '900' }}>N</RNText>
-          </View>
-        </View>
-        <RNText style={{ fontSize: 44, marginLeft: -6, marginBottom: -4 }}>🛒</RNText>
-      </View>
-      <RNText style={{ fontSize: 54, fontWeight: '900', color: '#0a3a99', marginTop: 14 }}>Near<RNText
-        style={{ color: '#3aa83f' }}>Kart</RNText>
-      </RNText>
-      <RNText style={{ fontSize: 17, fontWeight: '600', color: '#0a3a99', marginTop: 4 }}>Your neighbourhood, your marketplace.</RNText>
-
-      <View style={{ alignItems: 'center', marginTop: 70 }}>
-        <ActivityIndicator size="large" color={BLUE} />
-        <RNText style={{ color: '#0a3a99', fontSize: 17, fontWeight: '600', marginTop: 14 }}>Loading...</RNText>
-      </View>
-    </View>
-  );
-}
-
-// ======================================================================
 // AUTH (buyer login from Profile / Orders / Place order, seller login from business card)
 // ======================================================================
 function AuthBox({ role, onSession, onForgot }) {
@@ -2203,7 +2158,6 @@ function QtySheet({ p, initial, onClose, onAdd }) {
     </Sheet>
   );
 }
-
 // ======================================================================
 // BUYER: SHOP PAGE (with product photos and customer reviews)
 // ======================================================================
@@ -2800,7 +2754,7 @@ function Success({ done, onTrack, onHome }) {
       </View>
     </ScrollView>
   );
-            }
+}
 // ======================================================================
 // BUYER: FEEDBACK SHEET (rate a delivered order)
 // ======================================================================
@@ -4146,7 +4100,7 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
       )}
     </View>
   );
-}
+            }
 // ---------- Seller: Payment Account sheet (UPI ID + QR code) ----------
 function PaymentSheet({ shop, initial, onClose, onSaved }) {
   const startQr = initial && initial.qr_url ? String(initial.qr_url) : '';
@@ -5241,14 +5195,13 @@ function SellerFees({ shop, onBack }) {
 
 // ======================================================================
 // ROOT APP
+// (no splash screen, no language screen at launch - language is chosen only in Profile)
 // ======================================================================
 const EMPTY_PROFILE = { name: '', phone: '', address: '' };
 
 export default function App() {
-  const [splash, setSplash] = useState(true);
   const [lang, setLangState] = useState('en');
-  const [langPicked, setLangPicked] = useState(true);
-  const [showLang, setShowLang] = useState(false);
+  const [showLang, setShowLang] = useState(false); // opened ONLY from Profile -> Language
   const [session, setSession] = useState(null);
   const [role, setRole] = useState('buyer');
   const [profile, setProfile] = useState(EMPTY_PROFILE);
@@ -5346,11 +5299,10 @@ export default function App() {
         });
       } catch (e) { /* notifications are optional */ }
     }
-    let dead = false;
     (async () => {
-      const t0 = Date.now();
+      // saved language (default English). The language screen is never shown at launch.
       const sl = await store.get('lang');
-      if (sl && TR[sl]) { LANG = sl; setLangState(sl); } else { setLangPicked(false); }
+      if (sl && TR[sl]) { LANG = sl; setLangState(sl); }
       const sloc = await store.get('loc');
       if (sloc) { try { setLoc(JSON.parse(sloc)); } catch (e) { /* ignore broken saved location */ } }
       loadData();
@@ -5363,11 +5315,8 @@ export default function App() {
           try { await enterSession(sess, false, false); } catch (e) { /* session kept, user can retry */ }
         }
       }
-      const wait = SPLASH_MS - (Date.now() - t0);
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      if (!dead) setSplash(false);
     })();
-    return () => { dead = true; ON_EXPIRED = null; };
+    return () => { ON_EXPIRED = null; };
   }, []);
 
   // ---------- password reset deep link ----------
@@ -5407,7 +5356,7 @@ export default function App() {
 
   // ---------- small handlers ----------
   const changeLang = (l) => {
-    LANG = l; setLangState(l); store.set('lang', l); setLangPicked(true); setShowLang(false);
+    LANG = l; setLangState(l); store.set('lang', l); setShowLang(false);
   };
   const onLang = (k) => { if (k === 'pick') setShowLang(true); else changeLang(k); };
   const saveLoc = (l) => { setLoc(l); store.set('loc', JSON.stringify(l)); setLocOpen(false); };
@@ -5480,12 +5429,11 @@ export default function App() {
   // ======================================================================
   // RENDER
   // ======================================================================
-  if (splash) return <Splash />;
 
-  if (!langPicked || showLang) {
+  // language screen: only when the user taps Language inside Profile (or seller More)
+  if (showLang) {
     return (
-      <LangScreen current={lang} onPick={changeLang}
-        onClose={() => { if (!langPicked) changeLang('en'); else setShowLang(false); }} />
+      <LangScreen current={lang} onPick={changeLang} onClose={() => setShowLang(false)} />
     );
   }
 
@@ -5684,5 +5632,3 @@ const s = StyleSheet.create({
   tab: { flex: 1, alignItems: 'center' },
   tabT: { fontSize: 10, color: MUTE, marginTop: 2 },
 });
-
-
