@@ -2048,54 +2048,6 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
             if (b.distance == null) return -1;
             return a.distance - b.distance;
           });
-        if (!adShops.length) return null;
-        return (
-          <View style={{ paddingTop: 15, paddingBottom: 8 }}>
-            <View style={[s.rowB, { paddingHorizontal: 14, marginBottom: 10 }]}>
-              <View>
-                <Text style={[s.h, { color: '#18264b' }]}>✨ Offers & Great Deals Near You</Text>
-                <Text style={s.sub}>Shop advertisements and live offers in one place</Text>
-              </View>
-              <RNText style={{ color: '#7357d8', fontSize: 12, fontWeight: '800' }}>Swipe →</RNText>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 14, gap: 12, paddingBottom: 5 }}>
-              {adShops.map(({ shop, distance }, index) => (
-                <TouchableOpacity key={shop.id} activeOpacity={0.9} onPress={() => onShop(shop)}
-                  style={{ width: 278, borderRadius: 20, overflow: 'hidden', backgroundColor: index % 3 === 0 ? '#fff0e6' : index % 3 === 1 ? '#e9f4ff' : '#f4edff',
-                    borderWidth: 1, borderColor: index % 3 === 0 ? '#ffd4bd' : index % 3 === 1 ? '#c9e5ff' : '#dfd0ff', elevation: 3 }}>
-                  {shop.offer_image_url ? (
-                    <Image source={{ uri: shop.offer_image_url }} style={{ width: '100%', height: 132, backgroundColor: '#edf2fb' }} resizeMode="cover" />
-                  ) : (
-                    <View style={{ height: 132, alignItems: 'center', justifyContent: 'center', backgroundColor: index % 3 === 0 ? '#ffb987' : index % 3 === 1 ? '#9dd9f5' : '#c6a9f5' }}>
-                      <RNText style={{ fontSize: 46 }}>🎁</RNText>
-                      <RNText style={{ color: '#24304d', fontSize: 12, fontWeight: '900', marginTop: 4 }}>SPECIAL SHOP OFFER</RNText>
-                    </View>
-                  )}
-                  <View style={{ padding: 12 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <View style={{ backgroundColor: SURFACE, borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4 }}>
-                        <RNText style={{ color: '#d84b35', fontSize: 10, fontWeight: '900' }}>● LIVE OFFER</RNText>
-                      </View>
-                      <RNText style={{ color: '#4e607e', fontSize: 10, fontWeight: '800' }}>
-                        {distance == null ? 'Nearby' : distance < 1 ? (Math.round(distance * 1000) + ' m away') : (distance.toFixed(1) + ' km away')}
-                      </RNText>
-                    </View>
-                    <RNText style={{ color: '#18264b', fontSize: 15, fontWeight: '900', marginTop: 8 }} numberOfLines={1}>{shop.name}</RNText>
-                    <RNText style={{ color: '#a52f69', fontSize: 13, fontWeight: '900', marginTop: 4 }} numberOfLines={2}>{shop.offer}</RNText>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 9 }}>
-                      <RNText style={{ color: '#53627b', fontSize: 11 }} numberOfLines={1}>{shop.area || 'Your local shop'}</RNText>
-                      <RNText style={{ color: '#5c43bb', fontSize: 11, fontWeight: '900' }}>Explore offer  ›</RNText>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        );
-      })()}
-
-      {!filtering && (() => {
         const now = new Date();
         const liveDeals = products.filter((p) => {
           const discount = Number(p.discount_percent || 0);
@@ -2112,37 +2064,70 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
           if (!old || Number(p.discount_percent) > Number(old.discount_percent) ||
               (Number(p.discount_percent) === Number(old.discount_percent) && Number(p.price) < Number(old.price))) bestByProduct[key] = p;
         });
-        const todayDeals = Object.values(bestByProduct).sort((a, b) =>
+        const productDeals = Object.values(bestByProduct).sort((a, b) =>
           Number(b.discount_percent) - Number(a.discount_percent) || Number(a.price) - Number(b.price)).slice(0, 12);
-        if (!todayDeals.length) return null;
+        if (!adShops.length && !productDeals.length) return null;
         return (
-          <View style={{ paddingTop: 10, paddingBottom: 12 }}>
+          <View style={{ paddingTop: 15, paddingBottom: 10 }}>
             <View style={[s.rowB, { paddingHorizontal: 14, marginBottom: 10 }]}>
-              <View>
-                <Text style={[s.h, { color: '#18264b' }]}>🔥 Today’s Great Deals</Text>
-                <Text style={s.sub}>Best live product discounts from local shops</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.h, { color: '#18264b', letterSpacing: 0.45 }]}>OFFERS & GREAT DEALS NEAR YOU</Text>
+                <Text style={s.sub}>Shop offers and exciting deals around you</Text>
               </View>
-              <RNText style={{ color: '#e05a35', fontSize: 12, fontWeight: '800' }}>Swipe →</RNText>
+              <RNText style={{ color: '#7357d8', fontSize: 12, fontWeight: '800' }}>Swipe →</RNText>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 14, gap: 12, paddingBottom: 5 }}>
-              {todayDeals.map((p, index) => (
-                <TouchableOpacity key={p.id} activeOpacity={0.9} onPress={() => onProduct(p)}
-                  style={{ width: 164, backgroundColor: index % 2 ? '#eef8f2' : '#fff4e9', borderRadius: 18,
-                    borderWidth: 1, borderColor: index % 2 ? '#ccebd7' : '#ffdfc4', padding: 10, elevation: 2 }}>
-                  <View style={{ position: 'relative' }}>
-                    <Photo url={p.image_url} name={p.name} size={142} />
-                    <View style={{ position: 'absolute', top: 7, left: 7, backgroundColor: '#e94d43', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 5 }}>
-                      <RNText style={{ color: '#fff', fontSize: 11, fontWeight: '900' }}>{Math.round(Number(p.discount_percent))}% OFF</RNText>
+              {adShops.map(({ shop, distance }, index) => (
+                <TouchableOpacity key={'shop-offer-' + shop.id} activeOpacity={0.9} onPress={() => onShop(shop)}
+                  style={{ width: 310, minHeight: 146, flexDirection: 'row', borderRadius: 18, overflow: 'hidden',
+                    backgroundColor: index % 3 === 0 ? '#fff0e6' : index % 3 === 1 ? '#e9f4ff' : '#f4edff',
+                    borderWidth: 1, borderColor: index % 3 === 0 ? '#ffd4bd' : index % 3 === 1 ? '#c9e5ff' : '#dfd0ff', elevation: 3 }}>
+                  {shop.offer_image_url ? (
+                    <Image source={{ uri: shop.offer_image_url }} style={{ width: 112, height: '100%', minHeight: 146, backgroundColor: '#edf2fb' }} resizeMode="cover" />
+                  ) : (
+                    <View style={{ width: 112, minHeight: 146, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: index % 3 === 0 ? '#ffb987' : index % 3 === 1 ? '#9dd9f5' : '#c6a9f5' }}>
+                      <RNText style={{ fontSize: 38 }}>🎁</RNText>
+                      <RNText style={{ color: '#24304d', fontSize: 9, fontWeight: '900', marginTop: 4 }}>LIVE OFFER</RNText>
+                    </View>
+                  )}
+                  <View style={{ flex: 1, padding: 11, justifyContent: 'center' }}>
+                    <View style={{ alignSelf: 'flex-start', backgroundColor: '#ffffffaa', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 4 }}>
+                      <RNText style={{ color: '#d84b35', fontSize: 9, fontWeight: '900' }}>● LIVE SHOP OFFER</RNText>
+                    </View>
+                    <RNText style={{ color: '#18264b', fontSize: 14, fontWeight: '900', marginTop: 7 }} numberOfLines={1}>{shop.name}</RNText>
+                    <RNText style={{ color: '#a52f69', fontSize: 12, fontWeight: '900', marginTop: 4 }} numberOfLines={2}>{shop.offer}</RNText>
+                    <RNText style={{ color: '#53627b', fontSize: 10, marginTop: 6 }} numberOfLines={1}>
+                      {distance == null ? (shop.area || 'Nearby shop') : distance < 1 ? (Math.round(distance * 1000) + ' m away') : (distance.toFixed(1) + ' km away')}
+                    </RNText>
+                    <RNText style={{ color: '#5c43bb', fontSize: 10, fontWeight: '900', marginTop: 5 }}>Explore offer  ›</RNText>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {productDeals.map((p, index) => (
+                <TouchableOpacity key={'product-deal-' + p.id} activeOpacity={0.9} onPress={() => onProduct(p)}
+                  style={{ width: 310, minHeight: 146, flexDirection: 'row', borderRadius: 18, overflow: 'hidden',
+                    backgroundColor: index % 2 ? '#eef8f2' : '#fff4e9',
+                    borderWidth: 1, borderColor: index % 2 ? '#ccebd7' : '#ffdfc4', elevation: 3 }}>
+                  <View style={{ width: 112, minHeight: 146, alignItems: 'center', justifyContent: 'center', backgroundColor: index % 2 ? '#d9f1e2' : '#ffe5cc' }}>
+                    <Photo url={p.image_url} name={p.name} size={104} />
+                    <View style={{ position: 'absolute', top: 8, left: 7, backgroundColor: '#e94d43', borderRadius: 12, paddingHorizontal: 7, paddingVertical: 4 }}>
+                      <RNText style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>{Math.round(Number(p.discount_percent))}% OFF</RNText>
                     </View>
                   </View>
-                  <RNText style={{ color: '#1b2946', fontSize: 13, fontWeight: '900', marginTop: 8 }} numberOfLines={1}>{p.name}</RNText>
-                  <RNText style={{ color: '#66738b', fontSize: 10, marginTop: 2 }} numberOfLines={1}>{p.shops ? p.shops.name : 'Local shop'}</RNText>
-                  <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
-                    <RNText style={{ color: '#17834f', fontSize: 15, fontWeight: '900' }}>{money(p.price)}</RNText>
-                    <RNText style={{ color: '#8992a3', fontSize: 10, textDecorationLine: 'line-through' }}>{money(p.original_price)}</RNText>
+                  <View style={{ flex: 1, padding: 11, justifyContent: 'center' }}>
+                    <View style={{ alignSelf: 'flex-start', backgroundColor: '#ffffffaa', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 4 }}>
+                      <RNText style={{ color: '#17834f', fontSize: 9, fontWeight: '900' }}>🔥 PRODUCT DEAL</RNText>
+                    </View>
+                    <RNText style={{ color: '#1b2946', fontSize: 14, fontWeight: '900', marginTop: 7 }} numberOfLines={1}>{p.name}</RNText>
+                    <RNText style={{ color: '#66738b', fontSize: 10, marginTop: 3 }} numberOfLines={1}>{p.shops ? p.shops.name : 'Local shop'}</RNText>
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 7 }}>
+                      <RNText style={{ color: '#17834f', fontSize: 15, fontWeight: '900' }}>{money(p.price)}</RNText>
+                      <RNText style={{ color: '#8992a3', fontSize: 10, textDecorationLine: 'line-through' }}>{money(p.original_price)}</RNText>
+                    </View>
+                    <RNText style={{ color: '#5c43bb', fontSize: 10, fontWeight: '900', marginTop: 6 }}>View deal  ›</RNText>
                   </View>
-                  <RNText style={{ color: '#5c43bb', fontSize: 10, fontWeight: '900', marginTop: 5 }}>View deal  ›</RNText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
