@@ -114,7 +114,7 @@ const SUPPORT_EMAIL = 'ssupportnearkert@gmail.com';
 const SUPPORT_PHONE = '8144937920';
 
 const BLUE = '#2563eb', DARK = '#173b82', INK = '#172b4d', MUTE = '#64748b';
-const BG = '#f5f7fb', LINE = '#e3eaf4', GREEN = '#0f9668', RED = '#d9485f', LIME = '#8be0a2', ORANGE = '#e8872b';
+const BG = '#e9edf2', SURFACE = '#f0f2f5', LINE = '#e3eaf4', GREEN = '#0f9668', RED = '#d9485f', LIME = '#8be0a2', ORANGE = '#e8872b';
 const PURPLE = '#7656d6', TEAL = '#159b9a', PINK = '#dc5b91', AMBER = '#e6a23c', GOLD = '#f5b942';
 
 // ----------------------------------------------------------------------
@@ -1354,7 +1354,7 @@ function Btn({ t, onPress, kind, disabled, small, style }) {
       activeOpacity={0.8}
       style={[s.btn, small && s.btnS, kind === 'o' && s.btnO,
         kind === 'g' && { backgroundColor: GREEN }, kind === 'r' && s.btnR,
-        kind === 'w' && { backgroundColor: '#fff' },
+        kind === 'w' && { backgroundColor: SURFACE },
         kind === 'x' && { backgroundColor: '#cfd6e4' }, disabled && { opacity: 0.5 }, style]}
     >
       <Text
@@ -1431,7 +1431,7 @@ function QrImage({ url, size = 200 }) {
   }
   return (
     <Image source={{ uri: url }} resizeMode="contain" onError={() => setBad(true)}
-      style={{ width: size, height: size, borderRadius: 14, backgroundColor: '#fff' }} />
+      style={{ width: size, height: size, borderRadius: 14, backgroundColor: SURFACE }} />
   );
 }
 // star rating (tap to choose when onChange is given)
@@ -2074,7 +2074,7 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
                   )}
                   <View style={{ padding: 12 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <View style={{ backgroundColor: '#fff', borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4 }}>
+                      <View style={{ backgroundColor: SURFACE, borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4 }}>
                         <RNText style={{ color: '#d84b35', fontSize: 10, fontWeight: '900' }}>● LIVE OFFER</RNText>
                       </View>
                       <RNText style={{ color: '#4e607e', fontSize: 10, fontWeight: '800' }}>
@@ -2277,7 +2277,7 @@ function Categories({ shops, onShop, initial, clearInitial }) {
           const n = shops.filter((x) => shopCats(x).includes(c.k)).length;
           return (
             <TouchableOpacity key={c.k} style={[s.shopCard, { backgroundColor: c.bg, borderColor: 'transparent' }]} onPress={() => setSel(c.k)}>
-              <View style={[s.mic, { backgroundColor: '#fff', width: 60, height: 60, borderRadius: 18 }]}>
+              <View style={[s.mic, { backgroundColor: SURFACE, width: 60, height: 60, borderRadius: 18 }]}>
                 <RNText style={{ fontSize: 28 }}>{c.ic}</RNText>
               </View>
               <View style={{ flex: 1 }}>
@@ -3297,7 +3297,7 @@ function NoteCard({ ic, bg, title, text, time, onPress, right }) {
   return (
     <TouchableOpacity activeOpacity={onPress ? 0.85 : 1} onPress={onPress}
       style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: bg || '#fff' }]}>
-      <View style={[s.mic, { backgroundColor: '#fff' }]}><RNText style={{ fontSize: 22 }}>{ic}</RNText></View>
+      <View style={[s.mic, { backgroundColor: SURFACE }]}><RNText style={{ fontSize: 22 }}>{ic}</RNText></View>
       <View style={{ flex: 1 }}>
         <RNText style={s.shopN} numberOfLines={2}>{title}</RNText>
         {!!text && <RNText style={s.sub} numberOfLines={2}>{text}</RNText>}
@@ -3429,7 +3429,7 @@ function AddressPage({ profile, onSave, loc, onLoc, onBack }) {
       </View>
       <TouchableOpacity onPress={onLoc} activeOpacity={0.85}
         style={[s.card, { marginTop: -36, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#e8f0ff' }]}>
-        <View style={[s.mic, { backgroundColor: '#fff' }]}><RNText style={{ fontSize: 22 }}>📍</RNText></View>
+        <View style={[s.mic, { backgroundColor: SURFACE }]}><RNText style={{ fontSize: 22 }}>📍</RNText></View>
         <View style={{ flex: 1 }}>
           <Text style={s.shopN}>Delivery Location</Text>
           <RNText style={s.sub} numberOfLines={2}>{loc && (loc.full || loc.area) ? (loc.full || loc.area) : trs('Select your location')}</RNText>
@@ -3638,7 +3638,7 @@ function Profile({ session, needLogin, onPartner, onLogout, onOrders, lang, onLa
               Create your unique shop profile and connect directly with local customers. A simple process to list your products and take orders.
             </Text>
             <TouchableOpacity onPress={onPartner} activeOpacity={0.85}
-              style={{ backgroundColor: '#fff', borderRadius: 16, paddingVertical: 15, marginTop: 16,
+              style={{ backgroundColor: SURFACE, borderRadius: 16, paddingVertical: 15, marginTop: 16,
                 alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}>
               <Text style={{ color: BLUE, fontWeight: '800', fontSize: 17 }}>Create a Shop Profile</Text>
               <RNText style={{ fontSize: 20 }}>🏡✏️</RNText>
@@ -6079,7 +6079,7 @@ export default function App() {
         onLogout={logout} loadErr={shopErr} />;
     }
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: SURFACE }}>
         <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
         <View style={{ flex: 1, backgroundColor: BG }}>{sbody}</View>
       </SafeAreaView>
@@ -6131,7 +6131,7 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: SURFACE }}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <View style={{ flex: 1, backgroundColor: BG }}>{body}</View>
       {!done && (
@@ -6155,13 +6155,13 @@ const s = StyleSheet.create({
   btn: { backgroundColor: BLUE, borderRadius: 15, paddingVertical: 13, paddingHorizontal: 17,
     alignItems: 'center', justifyContent: 'center', minHeight: 48, shadowColor: '#1d4ed8', shadowOpacity: 0.12, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   btnS: { paddingVertical: 8, paddingHorizontal: 12, minHeight: 36, borderRadius: 12 },
-  btnO: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: BLUE },
-  btnR: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: RED },
+  btnO: { backgroundColor: SURFACE, borderWidth: 1.5, borderColor: BLUE },
+  btnR: { backgroundColor: SURFACE, borderWidth: 1.5, borderColor: RED },
   btnT: { color: '#fff', fontWeight: '800', fontSize: 15 },
   label: { fontSize: 12, color: MUTE, fontWeight: '700', marginBottom: 4 },
-  input: { borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 14,
+  input: { borderWidth: 1, borderColor: LINE, backgroundColor: SURFACE, borderRadius: 14, paddingHorizontal: 14,
     paddingVertical: 12, fontSize: 15, color: INK, marginBottom: 8 },
-  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1,
+  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, backgroundColor: SURFACE, borderWidth: 1,
     borderColor: LINE, marginRight: 8, marginBottom: 8 },
   chipOn: { backgroundColor: BLUE, borderColor: BLUE },
   tag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, fontSize: 12, fontWeight: '700',
@@ -6172,7 +6172,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 17, paddingBottom: 19, borderBottomLeftRadius: 22, borderBottomRightRadius: 22 },
   headT: { color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 8 },
   rowB: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  card: { backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: LINE, padding: 15,
+  card: { backgroundColor: SURFACE, borderRadius: 20, borderWidth: 1, borderColor: LINE, padding: 15,
     marginHorizontal: 14, marginTop: 13, shadowColor: '#20365d', shadowOpacity: 0.045, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
   h: { fontSize: 17, fontWeight: '800', color: INK, marginBottom: 8 },
   sub: { fontSize: 12.5, color: MUTE },
@@ -6181,21 +6181,21 @@ const s = StyleSheet.create({
   empty: { textAlign: 'center', color: MUTE, padding: 24, fontSize: 15 },
   price: { fontWeight: '800', color: INK, fontSize: 15 },
   offer: { color: ORANGE, fontWeight: '700', marginTop: 4, fontSize: 12 },
-  shopCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 19,
+  shopCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: SURFACE, borderRadius: 19,
     borderWidth: 1, borderColor: LINE, padding: 13, marginBottom: 11, shadowColor: '#20365d', shadowOpacity: 0.04, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  mini: { width: '48.5%', backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: LINE,
+  mini: { width: '48.5%', backgroundColor: SURFACE, borderRadius: 18, borderWidth: 1, borderColor: LINE,
     padding: 11, marginBottom: 11 },
   miniN: { fontSize: 14, fontWeight: '800', color: INK },
   arrow: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#e8f0ff', alignItems: 'center',
     justifyContent: 'center' },
-  pcard: { width: '48.5%', backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: LINE,
+  pcard: { width: '48.5%', backgroundColor: SURFACE, borderRadius: 18, borderWidth: 1, borderColor: LINE,
     padding: 11, marginBottom: 11 },
   tile: { width: '23%', paddingVertical: 12, borderRadius: 16, alignItems: 'center', marginBottom: 10 },
   tileT: { fontSize: 11, fontWeight: '700', color: INK, marginTop: 4 },
   banner: { marginHorizontal: 14, marginTop: 12, backgroundColor: '#e3f4e8', flexDirection: 'row',
     alignItems: 'center', borderRadius: 20, padding: 18 },
   hello: { color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 14 },
-  searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14,
+  searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: SURFACE, borderRadius: 14,
     paddingHorizontal: 12, marginTop: 14, gap: 8, height: 48 },
   searchIn: { flex: 1, fontSize: 14, color: INK, paddingVertical: 8 },
   avatarS: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.2)',
@@ -6206,12 +6206,12 @@ const s = StyleSheet.create({
   mic: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   mrow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
   mrowLine: { borderBottomWidth: 1, borderBottomColor: LINE },
-  tileCard: { width: '48.5%', backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, padding: 14,
+  tileCard: { width: '48.5%', backgroundColor: SURFACE, borderRadius: 18, borderWidth: 1, padding: 14,
     marginBottom: 10 },
   camBadge: { position: 'absolute', right: -4, bottom: -4, width: 26, height: 26, borderRadius: 13,
-    backgroundColor: '#fff', borderWidth: 1, borderColor: LINE, alignItems: 'center', justifyContent: 'center' },
+    backgroundColor: SURFACE, borderWidth: 1, borderColor: LINE, alignItems: 'center', justifyContent: 'center' },
   overlay: { flex: 1, backgroundColor: 'rgba(10,20,50,0.45)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 19,
+  sheet: { backgroundColor: SURFACE, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 19,
     paddingBottom: 30, maxHeight: '90%' },
   grab: { width: 44, height: 5, borderRadius: 3, backgroundColor: '#cfd6e4', alignSelf: 'center',
     marginBottom: 12 },
@@ -6225,10 +6225,10 @@ const s = StyleSheet.create({
     justifyContent: 'center' },
   okInner: { width: 80, height: 80, borderRadius: 40, backgroundColor: GREEN, alignItems: 'center',
     justifyContent: 'center' },
-  dot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#cfd6e4', backgroundColor: '#fff',
+  dot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#cfd6e4', backgroundColor: SURFACE,
     alignItems: 'center', justifyContent: 'center' },
   sdot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#cfd6e4',
-    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+    backgroundColor: SURFACE, alignItems: 'center', justifyContent: 'center' },
   abtn: { width: '48.5%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     paddingVertical: 12, borderRadius: 14, borderWidth: 1.5, marginBottom: 10 },
   adPhotoButton: { borderWidth: 1, borderColor: '#d7c5ee', borderStyle: 'dashed',
@@ -6246,7 +6246,7 @@ const s = StyleSheet.create({
   sec: { marginHorizontal: 14, marginTop: 14, marginBottom: 6 },
   alertBar: { backgroundColor: ORANGE, padding: 12, flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'center' },
-  tabbar: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: LINE,
+  tabbar: { flexDirection: 'row', backgroundColor: SURFACE, borderTopWidth: 1, borderTopColor: LINE,
     paddingTop: 7, paddingBottom: Platform.OS === 'android' ? 9 : 14, paddingHorizontal: 4 },
   tab: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 52 },
   tabIconWrap: { width: 42, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
