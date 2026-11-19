@@ -4805,11 +4805,12 @@ const payShort = (o) => (o.pay === 'upi' ? 'UPI' : o.pay === 'khata' ? 'Khata' :
 
 // find the delivery fee of the buyer's area (longest matching area name wins)
 function matchFee(fees, text) {
-  const t = String(text || '').toLowerCase();
+  const norm = (v) => String(v || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+  const t = norm(text);
   let best = null;
   (fees || []).forEach((f) => {
-    const a = String(f.area || '').trim().toLowerCase();
-    if (a && t.indexOf(a) >= 0 && (!best || a.length > String(best.area).length)) best = f;
+    const a = norm(f.area);
+    if (a && t.indexOf(a) >= 0 && (!best || a.length > norm(best.area).length)) best = f;
   });
   return best;
 }
@@ -5244,7 +5245,7 @@ function SellerFees({ shop, onBack }) {
       </View>
       <View style={s.card}>
         <Text style={s.h}>Your areas ({list.length})</Text>
-        {list.length === 0 && <Text style={s.sub}>No area added yet. Delivery stays free.</Text>}
+        {list.length === 0 && <Text style={s.sub}>No area-specific fee added yet. The shop's standard delivery charge applies; if it is ₹0, delivery is free.</Text>}
         {list.map((x) => (
           <View key={x.id} style={[s.rowB, { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: LINE }]}>
             <RNText style={[s.shopN, { flex: 1 }]}>{'📍 ' + x.area}</RNText>
