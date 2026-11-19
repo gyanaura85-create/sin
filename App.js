@@ -137,6 +137,7 @@ const KHATA = {
   record: (accId, v, note) => ['khata_record_payment', { p_account_id: accId, p_amount: v, p_note: note || null }],
   ledger: (accId) => ['khata_ledger', { p_account_id: accId }],
   myAccounts: () => ['khata_my_accounts', {}],
+  setReminder: (accId, dueAt, note) => ['khata_set_reminder', { p_account: accId, p_due_at: dueAt, p_note: note || null }],
 };
 
 const CATS = [
@@ -2364,7 +2365,8 @@ function khataUsable(a) {
   if (a.blocked === true || a.is_blocked === true || a.suspended === true) return false;
   if (a.credit_limit === null || a.credit_limit === undefined || a.credit_limit === '') return false;
   const lim = Number(a.credit_limit), bal = Number(a.balance || 0);
-  return Number.isFinite(lim) && lim >= 0 && Number.isFinite(bal);
+  const expiry = a.credit_limit_expires_at ? new Date(a.credit_limit_expires_at).getTime() : 0;
+  return Number.isFinite(lim) && lim >= 0 && Number.isFinite(bal) && expiry > Date.now();
 }
 function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setProfile, syncProfile }) {
   const [busy, setBusy] = useState(false);
@@ -4836,12 +4838,14 @@ function LedgerList({ entries }) {
 function KhataApply({ shop, profile }) {
   const [st, setSt] = useState(null);
   const [bal, setBal] = useState(0);
+  const [expiresAt, setExpiresAt] = useState(null);
+  const [limitExpired, setLimitExpired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const load = useCallback(() => {
     if (!SESSION) { setSt(''); return; }
     newRpc('khata_my_status', { p_shop_id: shop.id })
-      .then((r) => { const x = Array.isArray(r) ? r[0] : r; setSt((x && x.status) || ''); setBal(Number((x && x.balance) || 0)); })
+      .then((r) => { const x = Array.isArray(r) ? r[0] : r; setSt((x && x.status) || ''); setBal(Number((x && x.balance) || 0)); setExpiresAt(x && x.credit_limit_expires_at || null); setLimitExpired(!x || x.limit_expired === true); })
       .catch(() => setSt(''));
   }, [shop.id]);
   useEffect(() => { load(); }, [load]);
@@ -4863,7 +4867,15 @@ function KhataApply({ shop, profile }) {
         {st === 'pending' && <Tag t="Waiting for shop" kind="y" />}
         {st === 'rejected' && <Tag t="Rejected" kind="r" />}
       </View>
-      {st === 'approved' && <RNText style={s.sub}>{'You can choose Khata at checkout. Current due: ' + money(bal)}</RNText>}
+      {st === 'approved' && (
+        <View>
+          <RNText style={s.sub}>{'Current due: ' + money(bal)}</RNText>
+          <RNText style={[s.sub, { marginTop: 4, color: limitExpired ? RED : GREEN }]}>
+            {limitExpired ? 'Your one-month credit limit has expired. Ask the shop to set a new limit.' :
+              'Credit limit valid until ' + (expiresAt ? new Date(expiresAt).toLocaleString() : '—') + '. You can use Khata at checkout while credit is available.'}
+          </RNText>
+        </View>
+      )}
       {st === 'pending' && <Text style={s.sub}>The shop owner will approve or reject your request.</Text>}
       {(st === '' || st === 'rejected') && (
         <View>
@@ -4944,8 +4956,19 @@ function BuyerKhata({ session, onBack }) {
                 {a.credit_limit !== undefined && a.credit_limit !== null && (
                   <View style={[s.rowB, { marginTop: 6 }]}>
                     <Text style={s.sub}>Available credit</Text>
-                    <RNText style={{ color: GREEN, fontWeight: '700' }}>{money(Math.max(0, Number(a.credit_limit) - Number(a.balance || 0)))}</RNText>
+                    <RNText style={{ color: a.limit_expired ? RED : GREEN, fontWeight: '700' }}>
+                      {money(a.limit_expired ? 0 : Math.max(0, Number(a.credit_limit) - Number(a.balance || 0)))}
+                    </RNText>
                   </View>
+                )}
+                <RNText style={[s.sub, { marginTop: 5, color: a.limit_expired ? RED : MUTE }]}>
+                  {a.limit_expired ? 'Credit limit expired · ask shop to renew' :
+                    'Limit valid until ' + (a.credit_limit_expires_at ? new Date(a.credit_limit_expires_at).toLocaleString() : '—')}
+                </RNText>
+                {!!a.next_reminder_at && (
+                  <RNText style={[s.sub, { marginTop: 5, color: AMBER }]}>
+                    {'Payment reminder: ' + new Date(a.next_reminder_at).toLocaleString() + (a.reminder_note ? ' · ' + a.reminder_note : '')}
+                  </RNText>
                 )}
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                   <Btn kind="g" t="Pay now" style={{ flex: 1.2 }} onPress={() => openPay(a)} />
@@ -5009,6 +5032,9 @@ function SellerKhata({ shop, onBack }) {
   const [limitA, setLimitA] = useState(null);
   const [limitVal, setLimitVal] = useState('');
   const [payA, setPayA] = useState(null);
+  const [reminderA, setReminderA] = useState(null);
+  const [reminderAt, setReminderAt] = useState('');
+  const [reminderNote, setReminderNote] = useState('');
   const [amt, setAmt] = useState('');
   const [note, setNote] = useState('');
   const [led, setLed] = useState(null);
@@ -5037,6 +5063,22 @@ function SellerKhata({ shop, onBack }) {
     catch (e) { setMsg(errMsg(e)); }
   };
   const openPay = (a) => { setMsg(''); setAmt(''); setNote(''); setPayA(a); };
+  const openReminder = (a) => {
+    setMsg(''); setReminderA(a); setReminderNote('');
+    setReminderAt('');
+  };
+  const saveReminder = async () => {
+    if (!reminderA) return;
+    const raw = reminderAt.trim();
+    const parsed = new Date(raw.replace(' ', 'T'));
+    if (!raw || Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+      setMsg('Enter a future date and time in YYYY-MM-DD HH:mm format'); return;
+    }
+    try {
+      await kRpc(KHATA.setReminder(reminderA.account_id, parsed.toISOString(), reminderNote.trim()));
+      setReminderA(null); setMsg('✅ Payment reminder scheduled for buyer'); load();
+    } catch (e) { setMsg(errMsg(e)); }
+  };
   const record = async () => {
     const v = Number(amt);
     if (!(v > 0)) { setMsg('Enter the amount received'); return; }
@@ -5082,9 +5124,19 @@ function SellerKhata({ shop, onBack }) {
                     <RNText style={{ color: INK, fontWeight: '700' }}>{money(Number(a.credit_limit))}</RNText>
                   </View>
                 )}
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                <RNText style={[s.sub, { marginTop: 5, color: a.limit_expired ? RED : GREEN }]}>
+                  {a.limit_expired ? 'Limit expired · set a new one-month limit' :
+                    'Limit valid until ' + (a.credit_limit_expires_at ? new Date(a.credit_limit_expires_at).toLocaleString() : '—')}
+                </RNText>
+                {!!a.next_reminder_at && (
+                  <RNText style={[s.sub, { marginTop: 5, color: AMBER }]}>
+                    {'Reminder: ' + new Date(a.next_reminder_at).toLocaleString()}
+                  </RNText>
+                )}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
                   <Btn kind="g" t="Payment received" style={{ flex: 1.4 }} onPress={() => openPay(a)} />
                   <Btn kind="o" t="Limit" style={{ flex: 1 }} onPress={() => openLimit(a)} />
+                  <Btn kind="o" t="Reminder" style={{ flex: 1 }} onPress={() => openReminder(a)} />
                   <Btn kind="o" t="Ledger" style={{ flex: 1 }} onPress={() => openLedger(a)} />
                 </View>
               </View>
@@ -5111,9 +5163,23 @@ function SellerKhata({ shop, onBack }) {
           <View style={{ height: 12 }} />
           <Field label="Credit Limit (₹)" value={limitVal} onChangeText={setLimitVal}
             keyboardType="decimal-pad" placeholder="Example: 2000" />
-          <Text style={s.sub}>0 means this customer cannot place new Khata orders.</Text>
+          <Text style={s.sub}>This credit limit is valid for one month from the time you save it. After expiry, set a new limit. Outstanding dues remain payable.</Text>
           <Msg t={msg && !msg.startsWith('✅') ? msg : ''} />
           <Btn kind="g" t="Save Credit Limit" onPress={saveLimit} style={{ minHeight: 50, marginTop: 12 }} />
+        </Sheet>
+      )}
+      {reminderA && (
+        <Sheet onClose={() => setReminderA(null)}>
+          <Text style={s.h}>Set payment reminder</Text>
+          <RNText style={s.sub}>{(reminderA.customer_name || 'Customer') + ' · Due ' + money(Number(reminderA.balance || 0))}</RNText>
+          <View style={{ height: 10 }} />
+          <Field label="Reminder date & time (YYYY-MM-DD HH:mm)" value={reminderAt}
+            onChangeText={setReminderAt} placeholder="2026-11-20 18:00" autoCapitalize="none" />
+          <Field label="Note (optional)" value={reminderNote} onChangeText={setReminderNote}
+            placeholder="Please clear your Khata due" autoCapitalize="sentences" />
+          <Text style={s.sub}>The buyer will receive a NearKart notification at this time.</Text>
+          <Msg t={msg && !msg.startsWith('✅') ? msg : ''} />
+          <Btn kind="g" t="Schedule reminder" onPress={saveReminder} style={{ minHeight: 50, marginTop: 10 }} />
         </Sheet>
       )}
       {payA && (
