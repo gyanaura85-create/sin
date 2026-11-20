@@ -2296,7 +2296,6 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
   const [lo, setLo] = useState('');
   const [hi, setHi] = useState('');
   const [sheet, setSheet] = useState(null);
-  const rv = useShopReviews(shop.id, 0);
 
   useEffect(() => {
     api('/rest/v1/products?shop_id=eq.' + shop.id + '&active=eq.true&select=*&order=name')
@@ -2400,29 +2399,6 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
           })}
         </View>
 
-        <View style={s.card}>
-          <View style={s.rowB}>
-            <Text style={s.h}>⭐ Customer Reviews</Text>
-            {rv.list.length > 0 && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Stars v={avgRating(rv.list)} size={16} />
-                <RNText style={{ color: INK, fontWeight: '800' }}>{avgRating(rv.list)}</RNText>
-              </View>
-            )}
-          </View>
-          {rv.loading && <ActivityIndicator color={BLUE} />}
-          {!rv.loading && rv.list.length === 0 && <Text style={s.sub}>No reviews yet.</Text>}
-          {rv.list.slice(0, 5).map((r, i) => (
-            <View key={i} style={{ paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: LINE }}>
-              <View style={s.rowB}>
-                <RNText style={s.shopN}>{r.customer_name || 'Customer'}</RNText>
-                <RNText style={s.sub}>{r.created_at ? when(r.created_at) : ''}</RNText>
-              </View>
-              <Stars v={Number(r.rating)} size={14} />
-              {!!r.comment && <RNText style={{ color: INK, marginTop: 4 }}>{r.comment}</RNText>}
-            </View>
-          ))}
-        </View>
         <View style={{ height: 90 }} />
       </ScrollView>
 
@@ -2634,6 +2610,12 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
     const n = { ...cart.items }; delete n[id];
     setCart(Object.keys(n).length ? { ...cart, items: n } : null);
   };
+  const changeQty = (item, delta) => {
+    const nextQty = Number(item.qty || 0) + delta;
+    if (nextQty <= 0) { remove(item.p.id); return; }
+    if (Number(item.p.online_qty) > 0 && nextQty > Number(item.p.online_qty)) return;
+    setCart({ ...cart, items: { ...cart.items, [item.p.id]: { ...item, qty: nextQty } } });
+  };
   const place = async () => {
     if (lock.current) return;
     if (!session) { needLogin(); return; }
@@ -2748,23 +2730,45 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
   return (
     <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
       <Head title="Cart" sub={cart.shop.name} color={GREEN} />
+      <View style={{ marginHorizontal: 14, marginTop: 14 }}>
+        {items.map((i) => {
+          const original = Number(i.p.original_price || 0);
+          const pct = productDiscountPercent(i.p);
+          const discounted = isProductDealLive(i.p);
+          return (
+            <View key={i.p.id} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#102b4d', borderWidth: 1, borderColor: '#29496d', borderRadius: 19, padding: 11, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 3 }}>
+              <Photo url={i.p.image_url} name={i.p.name} size={82} />
+              <View style={{ flex: 1, marginLeft: 12, minWidth: 0 }}>
+                <RNText style={{ color: '#f4f8ff', fontSize: 15, fontWeight: '800' }} numberOfLines={2}>{i.p.name}</RNText>
+                <RNText style={{ color: '#b9cbe0', fontSize: 11, marginTop: 2 }}>{unitLabel(i.p.unit)}</RNText>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
+                  <RNText style={{ color: '#fff', fontSize: 15, fontWeight: '900' }}>{money(i.p.price)}</RNText>
+                  {discounted && <View style={{ backgroundColor: '#d8f6e7', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 3 }}>
+                    <RNText style={{ color: '#176b45', fontSize: 10, fontWeight: '900' }}>{pct}% OFF</RNText>
+                  </View>}
+                  {original > Number(i.p.price) && <RNText style={{ color: '#9aadc4', fontSize: 11, textDecorationLine: 'line-through' }}>{money(original)}</RNText>}
+                </View>
+                <RNText style={{ color: '#c5d8ee', fontSize: 11, marginTop: 4 }}>{money(i.p.price)} × {qtyLabel(i.qty, i.p.unit)} = {money(i.p.price * i.qty)}</RNText>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#0a203e', borderWidth: 1, borderColor: '#355675', borderRadius: 20, paddingHorizontal: 5, paddingVertical: 3 }}>
+                    <TouchableOpacity onPress={() => changeQty(i, -1)} activeOpacity={0.75} style={{ width: 27, height: 27, borderRadius: 14, backgroundColor: '#1b4568', alignItems: 'center', justifyContent: 'center' }}>
+                      <RNText style={{ color: '#fff', fontWeight: '900', fontSize: 17 }}>−</RNText>
+                    </TouchableOpacity>
+                    <RNText style={{ color: '#fff', fontWeight: '900', minWidth: 15, textAlign: 'center' }}>{i.qty}</RNText>
+                    <TouchableOpacity onPress={() => changeQty(i, 1)} activeOpacity={0.75} disabled={Number(i.p.online_qty) > 0 && Number(i.qty) >= Number(i.p.online_qty)} style={{ width: 27, height: 27, borderRadius: 14, backgroundColor: '#20c5d8', alignItems: 'center', justifyContent: 'center', opacity: Number(i.p.online_qty) > 0 && Number(i.qty) >= Number(i.p.online_qty) ? 0.45 : 1 }}>
+                      <RNText style={{ color: '#06213d', fontWeight: '900', fontSize: 17 }}>+</RNText>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity onPress={() => remove(i.p.id)} activeOpacity={0.7} style={{ paddingHorizontal: 9, paddingVertical: 6 }}>
+                    <RNText style={{ color: '#ff8292', fontSize: 11, fontWeight: '800' }}>Remove</RNText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          );
+        })}
+      </View>
       <View style={s.card}>
-        {items.map((i) => (
-          <View key={i.p.id} style={s.prow}>
-            <Photo url={i.p.image_url} name={i.p.name} size={56} />
-            <View style={{ flex: 1 }}>
-              <RNText style={s.shopN}>{i.p.name}</RNText>
-              <Text
-                style={s.sub}>{qtyLabel(i.qty, i.p.unit)} × {money(i.p.price)}/{unitLabel(i.p.unit)}</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={s.price}>{money(i.p.price * i.qty)}</Text>
-              <TouchableOpacity onPress={() => remove(i.p.id)}>
-                <Text style={{ color: RED, marginTop: 4 }}>Remove</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ))}
         <View style={[s.rowB, { marginTop: 10 }]}>
           <Text style={s.sub}>Subtotal</Text>
           <RNText style={{ color: INK, fontWeight: '700' }}>{money(total)}</RNText>
