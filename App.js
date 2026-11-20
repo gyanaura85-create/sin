@@ -3373,13 +3373,13 @@ function AddressPage({ profile, onSave, loc, onLoc, onBack }) {
         <Text style={{ color: '#e6eeff', marginTop: 2 }}>Used automatically at checkout</Text>
       </View>
       <TouchableOpacity onPress={onLoc} activeOpacity={0.85}
-        style={[s.card, { marginTop: -36, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#e8f0ff' }]}>
-        <View style={[s.mic, { backgroundColor: SURFACE }]}><RNText style={{ fontSize: 22 }}>📍</RNText></View>
+        style={[s.card, { marginTop: -36, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#102b4d', borderColor: '#355675' }]}>
+        <View style={[s.mic, { backgroundColor: '#0a203e', borderWidth: 1, borderColor: '#355675' }]}><RNText style={{ fontSize: 22 }}>📍</RNText></View>
         <View style={{ flex: 1 }}>
-          <Text style={s.shopN}>Delivery Location</Text>
-          <RNText style={s.sub} numberOfLines={2}>{loc && (loc.full || loc.area) ? (loc.full || loc.area) : trs('Select your location')}</RNText>
+          <RNText style={{ color: '#f4f8ff', fontSize: 16, fontWeight: '800' }}>Delivery Location</RNText>
+          <RNText style={{ color: '#c5d8ee', fontSize: 13, marginTop: 3 }} numberOfLines={2}>{loc && (loc.full || loc.area) ? (loc.full || loc.area) : trs('Select your location')}</RNText>
         </View>
-        <RNText style={{ color: BLUE, fontSize: 22 }}>›</RNText>
+        <RNText style={{ color: '#20c5d8', fontSize: 25, fontWeight: '800' }}>›</RNText>
       </TouchableOpacity>
       <View style={s.card}>
         <Text style={s.h}>🏠 My address</Text>
