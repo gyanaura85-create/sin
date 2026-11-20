@@ -1507,10 +1507,10 @@ function ProfTile({ ic, bg, title, sub, onPress, danger, badge }) {
 // big colourful stat tile
 function StatTile({ ic, v, label, bg, fg }) {
   return (
-    <View style={{ width: '48.5%', backgroundColor: bg, borderRadius: 18, padding: 14, marginBottom: 10 }}>
+    <View style={{ width: '48.5%', backgroundColor: '#163452', borderWidth: 1, borderColor: LINE, borderRadius: 18, padding: 14, marginBottom: 10 }}>
       <RNText style={{ fontSize: 24 }}>{ic}</RNText>
-      <RNText style={{ fontSize: 22, fontWeight: '800', color: fg || INK, marginTop: 6 }}>{v}</RNText>
-      <Text style={{ fontSize: 12, color: fg || MUTE, fontWeight: '600' }}>{label}</Text>
+      <RNText style={{ fontSize: 22, fontWeight: '800', color: '#f3f7ff', marginTop: 6 }}>{v}</RNText>
+      <Text style={{ fontSize: 12, color: '#b7cbe2', fontWeight: '600' }}>{label}</Text>
     </View>
   );
 }
@@ -1551,9 +1551,9 @@ function LangScreen({ onPick, current, onClose }) {
           lineHeight: 24 }}>Choose your language{'\n'}अपनी भाषा चुनें{'\n'}ଆପଣଙ୍କ ଭାଷା ବାଛନ୍ତୁ</RNText>
       {LANGS.map(([k, n]) => (
         <TouchableOpacity key={k} onPress={() => onPick(k)}
-          style={{ backgroundColor: current === k ? LIME : '#fff', borderRadius: 16, padding: 18,
+          style={{ backgroundColor: current === k ? '#174c70' : '#122b4d', borderWidth: 1, borderColor: current === k ? BLUE : LINE, borderRadius: 16, padding: 18,
             marginBottom: 12, alignItems: 'center' }}>
-          <RNText style={{ fontSize: 20, fontWeight: '800', color: INK }}>{n}</RNText>
+          <RNText style={{ fontSize: 20, fontWeight: '800', color: '#f3f7ff' }}>{n}</RNText>
         </TouchableOpacity>
       ))}
       <TouchableOpacity onPress={onClose} style={{ alignItems: 'center', padding: 12 }}>
@@ -2061,10 +2061,10 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
             {[...CATS.slice(0, 7), { k: 'More', ic: '•••', bg: '#e8f0ff' }].map((c) => (
               <TouchableOpacity key={c.k}
-                style={[s.tile, { backgroundColor: c.bg }]} onPress={() => (c.k === 'More' ? onCats() : onCat(c.k))}>
+                style={[s.tile, { backgroundColor: '#173657', borderWidth: 1, borderColor: '#315576' }]} onPress={() => (c.k === 'More' ? onCats() : onCat(c.k))}>
                 <RNText
-                  style={{ fontSize: c.k === 'More' ? 22 : 30, color: BLUE, fontWeight: '800' }}>{c.ic}</RNText>
-                <Text style={s.tileT} numberOfLines={1}>{c.k}</Text>
+                  style={{ fontSize: c.k === 'More' ? 22 : 30, color: '#72e4f3', fontWeight: '800' }}>{c.ic}</RNText>
+                <Text style={[s.tileT, { color: '#f3f7ff' }]} numberOfLines={1}>{c.k}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -2076,11 +2076,11 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
           style={s.banner}>
           <View style={{ flex: 1 }}>
             <RNText
-              style={{ fontSize: 24, fontWeight: '800', color: INK }} numberOfLines={1}>{sl.shop ? sl.t1 : trs(sl.t1)}</RNText>
+              style={{ fontSize: 24, fontWeight: '800', color: '#f3f7ff' }} numberOfLines={1}>{sl.shop ? sl.t1 : trs(sl.t1)}</RNText>
             <RNText
               style={{ fontSize: 24, fontWeight: '800', color: GREEN }} numberOfLines={1}>{sl.shop ? sl.t2 : trs(sl.t2)}</RNText>
             <RNText
-              style={{ color: MUTE, marginTop: 4 }} numberOfLines={1}>{sl.shop ? sl.d : trs(sl.d)}</RNText>
+              style={{ color: '#c3d8e9', marginTop: 4 }} numberOfLines={1}>{sl.shop ? sl.d : trs(sl.d)}</RNText>
             <View style={{ flexDirection: 'row', gap: 6, marginTop: 12 }}>
               {slides.map((_, i) => <View key={i}
                 style={{ height: 6, width: i === cur ? 26 : 6, borderRadius: 3,
@@ -3203,7 +3203,7 @@ function BuyerOrders({ session, needLogin, onReorder }) {
 function NoteCard({ ic, bg, title, text, time, onPress, right }) {
   return (
     <TouchableOpacity activeOpacity={onPress ? 0.85 : 1} onPress={onPress}
-      style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: bg || '#fff' }]}>
+      style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#122b4d', borderColor: LINE }]}>
       <View style={[s.mic, { backgroundColor: SURFACE }]}><RNText style={{ fontSize: 22 }}>{ic}</RNText></View>
       <View style={{ flex: 1 }}>
         <RNText style={s.shopN} numberOfLines={2}>{title}</RNText>
@@ -6085,7 +6085,7 @@ const s = StyleSheet.create({
     padding: 11, marginBottom: 11 },
   tile: { width: '23%', paddingVertical: 12, borderRadius: 16, alignItems: 'center', marginBottom: 10 },
   tileT: { fontSize: 11, fontWeight: '700', color: INK, marginTop: 4 },
-  banner: { marginHorizontal: 14, marginTop: 12, backgroundColor: '#e3f4e8', flexDirection: 'row',
+  banner: { marginHorizontal: 14, marginTop: 12, backgroundColor: '#103d58', borderWidth: 1, borderColor: '#1b8c91', flexDirection: 'row',
     alignItems: 'center', borderRadius: 20, padding: 18 },
   hello: { color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 14 },
   searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#19365b', borderRadius: 14,
