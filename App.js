@@ -2471,7 +2471,7 @@ function khataUsable(a) {
   const expiry = a.credit_limit_expires_at ? new Date(a.credit_limit_expires_at).getTime() : 0;
   return Number.isFinite(lim) && lim >= 0 && Number.isFinite(bal) && expiry > Date.now();
 }
-function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setProfile, syncProfile }) {
+function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setProfile, syncProfile, shopGroups = [], onSelectShop }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [dtype, setDtype] = useState('delivery'); // 'delivery' | 'pickup'
@@ -2730,6 +2730,20 @@ function CartScreen({ cart, setCart, session, needLogin, onDone, profile, setPro
   return (
     <ScrollView keyboardShouldPersistTaps="handled" style={{ backgroundColor: BG }}>
       <Head title="Cart" sub={cart.shop.name} color={GREEN} />
+      {shopGroups.length > 1 && <View style={{ marginHorizontal: 14, marginTop: 12, padding: 12, borderRadius: 15, backgroundColor: '#102b4d', borderWidth: 1, borderColor: '#29496d' }}>
+        <RNText style={{ color: '#c5d8ee', fontSize: 12, fontWeight: '800', marginBottom: 8 }}>SAVED SHOP CARTS · ORDER ONE SHOP AT A TIME</RNText>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {shopGroups.map((g) => {
+            const count = Object.keys(g.items || {}).length;
+            const active = g.shop.id === cart.shop.id;
+            return <TouchableOpacity key={g.shop.id} onPress={() => onSelectShop && onSelectShop(g.shop.id)} activeOpacity={0.85}
+              style={{ paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, marginRight: 8, backgroundColor: active ? '#20c5d8' : '#0a203e', borderWidth: 1, borderColor: active ? '#20c5d8' : '#355675' }}>
+              <RNText style={{ color: active ? '#06213d' : '#f4f8ff', fontWeight: '800', fontSize: 12 }}>{g.shop.name}</RNText>
+              <RNText style={{ color: active ? '#06213d' : '#b9cbe0', fontSize: 10 }}>{count} {count === 1 ? 'item' : 'items'}</RNText>
+            </TouchableOpacity>;
+          })}
+        </ScrollView>
+      </View>}
       <View style={{ marginHorizontal: 14, marginTop: 14 }}>
         {items.map((i) => {
           const original = Number(i.p.original_price || 0);
