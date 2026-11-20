@@ -1348,7 +1348,7 @@ function shopDistanceKm(shop, loc) {
 // ======================================================================
 // SMALL UI PARTS
 // ======================================================================
-function Btn({ t, onPress, kind, disabled, small, style }) {
+function Btn({ t, onPress, kind, disabled, small, style, textColor }) {
   const pressScale = useRef(new Animated.Value(1)).current;
   const pressIn = () => Animated.spring(pressScale, { toValue: 0.965, useNativeDriver: true, speed: 28, bounciness: 4 }).start();
   const pressOut = () => Animated.spring(pressScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 5 }).start();
@@ -1368,7 +1368,7 @@ function Btn({ t, onPress, kind, disabled, small, style }) {
         <Text
           style={[s.btnT, kind === 'o' && { color: '#72e4f3' }, kind === 'r' && { color: RED },
             kind === 'w' && { color: INK },
-            kind === 'x' && { color: MUTE }]}>{t}</Text>
+            kind === 'x' && { color: MUTE }, textColor && { color: textColor }]}>{t}</Text>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -3390,7 +3390,7 @@ function AddressPage({ profile, onSave, loc, onLoc, onBack }) {
           multiline autoCapitalize="sentences" />
         <Msg t={msg} ok={good} />
         <View style={{ height: 8 }} />
-        <Btn t={busy ? 'Please wait...' : 'Save profile'} onPress={save} disabled={busy} style={{ minHeight: 50 }} />
+        <Btn t={busy ? 'Please wait...' : 'Save profile'} onPress={save} disabled={busy} textColor="#06213d" style={{ minHeight: 50 }} />
       </View>
       <View style={{ height: 30 }} />
     </ScrollView>
