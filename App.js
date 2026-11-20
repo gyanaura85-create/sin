@@ -2315,7 +2315,7 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
     (!q || matchText((p.name || '') + ' ' + (p.category || ''), q)) &&
     (!lo || p.price >= Number(lo)) && (!hi || p.price <= Number(hi))
   );
-  const mine = cart && cart.shop && cart.shop.id === shop.id ? cart.items : {};
+  const mine = cart && cart.shops && cart.shops[shop.id] ? cart.shops[shop.id].items : {};
   const cnt = Object.keys(mine).length;
   const tot = Object.values(mine).reduce((t, i) => t + i.p.price * i.qty, 0);
 
@@ -5890,20 +5890,14 @@ export default function App() {
   };
   const openCat = (c) => { setCatInit(c); pick('cats'); };
 
+  // Multi-shop saved cart: keep each shop's products in its own group.
   const addToCart = (shop, p, qty) => {
-    const doAdd = (base) => {
-      const items = { ...(base ? base.items : {}) };
-      items[p.id] = { p, qty };
-      setCart({ shop, items });
-    };
-    if (cart && cart.shop && cart.shop.id !== shop.id && Object.keys(cart.items || {}).length) {
-      Alert.alert(trs('Different shop'), trs('Your cart has items from another shop. Clear it?'), [
-        { text: trs('No'), style: 'cancel' },
-        { text: trs('Yes'), onPress: () => doAdd(null) },
-      ]);
-      return;
-    }
-    doAdd(cart);
+    setCart((prev) => {
+      const groups = { ...((prev && prev.shops) || {}) };
+      const oldGroup = groups[shop.id] || { shop, items: {} };
+      groups[shop.id] = { shop, items: { ...oldGroup.items, [p.id]: { p, qty } } };
+      return { shops: groups, activeShopId: shop.id };
+    });
   };
 
   const reorder = async (o) => {
@@ -5921,7 +5915,7 @@ export default function App() {
       const sid = o.shop_id || (fresh[0] && fresh[0].shop_id);
       const shop = shops.find((x) => x.id === sid);
       if (!Object.keys(items).length || !shop) { none(); return; }
-      setCart({ shop, items });
+      setCart((prev) => ({ shops: { ...((prev && prev.shops) || {}), [shop.id]: { shop, items } }, activeShopId: shop.id }));
       pick('cart');
     } catch (e) { Alert.alert(trs('Reorder'), errMsg(e)); }
   };
@@ -5944,7 +5938,7 @@ export default function App() {
     } catch (e) { return errMsg(e); }
   };
   const syncProfile = () => { if (SESSION && role === 'buyer') saveProfile(profile); };
-  const onOrderDone = (d) => { setCart(null); setDone(d); loadData(); };
+  const onOrderDone = (d) => { setCart((prev) => { const groups = { ...((prev && prev.shops) || {}) }; delete groups[d.shop.id]; const ids = Object.keys(groups); return ids.length ? { shops: groups, activeShopId: ids[0] } : null; }); setDone(d); loadData(); };
 
   // ======================================================================
   // RENDER
@@ -6028,8 +6022,22 @@ export default function App() {
   } else if (tab === 'cats') {
     body = <Categories shops={shops} onShop={openShop} initial={catInit} clearInitial={() => setCatInit(null)} />;
   } else if (tab === 'cart') {
-    body = <CartScreen cart={cart} setCart={setCart} session={session} needLogin={needLogin} onDone={onOrderDone}
-      profile={profile} setProfile={setProfile} syncProfile={syncProfile} />;
+    {
+      const groups = cart && cart.shops ? cart.shops : {};
+      const ids = Object.keys(groups);
+      const activeId = cart && cart.activeShopId && groups[cart.activeShopId] ? cart.activeShopId : ids[0];
+      const active = activeId ? groups[activeId] : null;
+      const setActiveCart = (next) => setCart((prev) => {
+        const all = { ...((prev && prev.shops) || {}) };
+        if (!next) delete all[activeId];
+        else all[activeId] = next;
+        const left = Object.keys(all);
+        return left.length ? { shops: all, activeShopId: left.includes(activeId) ? activeId : left[0] } : null;
+      });
+      body = <CartScreen cart={active || null} setCart={setActiveCart} session={session} needLogin={needLogin} onDone={onOrderDone}
+        profile={profile} setProfile={setProfile} syncProfile={syncProfile}
+        shopGroups={ids.map((id) => groups[id])} onSelectShop={(id) => setCart((prev) => ({ ...prev, activeShopId: id }))} />;
+    }
   } else if (tab === 'orders') {
     body = <BuyerOrders session={session} needLogin={needLogin} onReorder={reorder} />;
   } else {
