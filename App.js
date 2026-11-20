@@ -1328,6 +1328,8 @@ function dedupeById(list) {
   return list.filter((p) => { if (!p || seen[p.id]) return false; seen[p.id] = 1; return true; });
 }
 const inStock = (p) => Number(p.online_qty) > 0;
+const productDiscountPercent = (p) => { const price = Number(p && p.price || 0); const original = Number(p && p.original_price || 0); if (original > price && price > 0) return Math.max(1, Math.round((original - price) / original * 100)); return Math.max(0, Math.round(Number(p && p.discount_percent || 0))); };
+const isProductDealLive = (p) => productDiscountPercent(p) > 0 && (!p.offer_expires_at || new Date(String(p.offer_expires_at).slice(0, 10) + 'T23:59:59') >= new Date());
 // a shop offer is live until its end date (no end date = always live)
 const isOfferLive = (x) => !!(x && x.offer) &&
   (!x.offer_end_date || new Date(String(x.offer_end_date).slice(0, 10) + 'T23:59:59') >= new Date());
@@ -1918,15 +1920,22 @@ function ShopMini({ x, onPress }) {
   );
 }
 function ProductTile({ p, onProduct }) {
-  const out = Number(p.online_qty) <= 0;
+  const out = Number(p.online_qty) <= 0, deal = isProductDealLive(p), pct = productDiscountPercent(p), original = Number(p.original_price || 0);
   return (
     <TouchableOpacity style={s.pcard} onPress={() => onProduct(p)} activeOpacity={0.85}>
-      <Photo url={p.image_url} name={p.name} size={110} />
+      <View style={{ position: 'relative' }}>
+        <Photo url={p.image_url} name={p.name} size={110} />
+        {deal && <View style={{ position: 'absolute', top: 5, left: 5, backgroundColor: '#ff5574', borderRadius: 9, paddingHorizontal: 7, paddingVertical: 4 }}>
+          <RNText style={{ color: '#fff', fontSize: 11, fontWeight: '900' }}>{pct}% OFF</RNText>
+        </View>}
+      </View>
       <RNText style={[s.shopN, { marginTop: 8, fontSize: 14 }]} numberOfLines={1}>{p.name}</RNText>
       <RNText style={s.sub} numberOfLines={1}>{p.shops ? p.shops.name : ''}</RNText>
       <View style={[s.rowB, { marginTop: 6 }]}>
-        <RNText style={s.price}>{money(p.price)}<RNText style={s.sub}>/{unitLabel(p.unit)}</RNText>
-        </RNText>
+        <View style={{ flex: 1 }}>
+          <RNText style={s.price}>{money(p.price)}<RNText style={s.sub}>/{unitLabel(p.unit)}</RNText></RNText>
+          {deal && original > Number(p.price) && <RNText style={{ color: MUTE, fontSize: 11, textDecorationLine: 'line-through' }}>{money(original)}</RNText>}
+        </View>
         {out && <Tag t="Out of stock" kind="r" sm />}
       </View>
     </TouchableOpacity>
@@ -1981,6 +1990,7 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
     ? dedupeById([...products.filter((p) => matchText(pText(p), ql)), ...sp.filter((p) => matchText(pText(p), ql))])
     : products;
   const shownProds = ql ? fProds : fProds.slice(0, 12);
+  const highDiscountProducts = !filtering ? products.filter((p) => inStock(p) && isProductDealLive(p)).sort((a, b) => productDiscountPercent(b) - productDiscountPercent(a)).slice(0, 8) : [];
   // if every match is out of stock, suggest related products that ARE available
   let alts = [];
   if (ql && fProds.length > 0 && !fProds.some(inStock)) {
@@ -2109,6 +2119,14 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
           {shownShops.map((x) => <ShopMini key={x.id} x={x} onPress={onShop} />)}
         </View>
 
+        {!filtering && fShops.length > 0 && <Text style={[s.h, { marginTop: 10 }]}>✨ Popular Local Shops</Text>}
+        {!filtering && fShops.length > 0 && <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+          {fShops.filter((x) => x.is_open).sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0)).slice(0, 4).map((x) => <ShopMini key={'popular' + x.id} x={x} onPress={onShop} />)}
+        </View>}
+        {highDiscountProducts.length > 0 && <Text style={[s.h, { marginTop: 12, color: '#ff7790' }]}>🔥 Best Discounts Near You</Text>}
+        {highDiscountProducts.length > 0 && <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+          {highDiscountProducts.map((p) => <ProductTile key={'deal' + p.id} p={p} onProduct={onProduct} />)}
+        </View>}
         {shownProds.length > 0 && <Text style={[s.h, { marginTop: 8 }]}>Popular Products</Text>}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
           {shownProds.map((p) => <ProductTile key={p.id} p={p} onProduct={onProduct} />)}
@@ -2360,10 +2378,12 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
                 <Photo url={p.image_url} name={p.name} size={68} />
                 <View style={{ flex: 1 }}>
                   <RNText style={s.shopN}>{p.name}</RNText>
-                  <Text
-                    style={s.sub}>{money(p.price)} / {unitLabel(p.unit)}{p.category ? ' · ' + p.category : ''}</Text>
-                  {op > Number(p.price) && <RNText
-                    style={[s.sub, { textDecorationLine: 'line-through' }]}>{money(op)}</RNText>}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                    <RNText style={{ color: '#f3f7ff', fontWeight: '800' }}>{money(p.price)} / {unitLabel(p.unit)}</RNText>
+                    {isProductDealLive(p) && <Tag t={productDiscountPercent(p) + '% OFF'} kind="r" sm />}
+                  </View>
+                  {op > Number(p.price) && <RNText style={[s.sub, { textDecorationLine: 'line-through' }]}>{money(op)}</RNText>}
+                  {p.category ? <RNText style={s.sub}>{p.category}</RNText> : null}
                   {out && <Tag t="Out of stock" kind="r" />}
                   {lowS && <Tag t={'Only ' + qtyLabel(Number(p.online_qty), p.unit) + ' left'} kind="y" />}
                 </View>
@@ -3690,16 +3710,14 @@ async function publishShopAdvertisement(shop, setShop, offer, endDate, photo) {
 function SellerDash({ shop, setShop, os, products, goTab, openOrder, reloadP, ordersErr, onBell }) {
   const [offer, setOffer] = useState(shop.offer || '');
   const [offerEndDate, setOfferEndDate] = useState(shop.offer_end_date || '');
-  const [offerImage, setOfferImage] = useState(null);
   const [adBusy, setAdBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const publishAd = async () => {
     if (!offer.trim()) { setMsg('Offer text enter karo.'); return; }
-    if (!offerImage && !shop.offer_image_url) { setMsg('Advertisement photo select karo (max 500 KB).'); return; }
     setAdBusy(true);
     try {
-      await publishShopAdvertisement(shop, setShop, offer, offerEndDate, offerImage);
-      setOfferImage(null); setMsg('✅ Advertisement published');
+      await publishShopAdvertisement(shop, setShop, offer, offerEndDate, null);
+      setMsg('✅ Advertisement published');
     } catch (e) { setMsg(errMsg(e)); }
     finally { setAdBusy(false); }
   };
@@ -3761,27 +3779,17 @@ function SellerDash({ shop, setShop, os, products, goTab, openOrder, reloadP, or
         <Field label="Offer (shown to customers)" value={offer} onChangeText={setOffer} placeholder="Weekend special: 20% OFF" autoCapitalize="sentences" />
         <Field label="Advertisement End Date (optional)" value={offerEndDate}
           onChangeText={setOfferEndDate} placeholder="YYYY-MM-DD (Example: 2026-12-31)" />
-        <TouchableOpacity onPress={async () => {
-          try { const picked = await pickAdPhoto(); if (picked) setOfferImage(picked); }
-          catch (e) { setMsg(e.message || 'Photo select nahi hui'); }
-        }} style={s.adPhotoButton}>
-          <RNText style={s.adPhotoButtonText}>🖼️  {offerImage ? 'Change selected advertisement photo' : 'Add advertisement photo (max 500 KB)'}</RNText>
-        </TouchableOpacity>
-        {(offerImage || shop.offer_image_url) && <Image
-          source={{ uri: offerImage ? offerImage.uri : shop.offer_image_url }} style={s.adPreview} resizeMode="cover" />}
-        {!!offerImage && <Text style={s.sub}>Selected photo: {(offerImage.bytes / 1024).toFixed(0)} KB</Text>}
         <Btn t={adBusy ? 'Uploading…' : 'Publish Advertisement'} disabled={adBusy} onPress={publishAd} />
       </View>
       {lowP.length > 0 && (
-        <View style={[s.card, { backgroundColor: '#fff8e6', borderColor: '#f3dca0' }]}>
-          <Text style={s.h}>⚠️ Stock alert</Text>
+        <View style={[s.card, { backgroundColor: '#122b4d', borderColor: '#ffb84d', borderWidth: 1.5 }]}>
+          <Text style={[s.h, { color: '#ffd166' }]}>⚠️ Stock Alert · Action needed</Text>
           {lowP.slice(0, 4).map((p) => (
             <View key={p.id} style={s.prow}>
               <Photo url={p.image_url} name={p.name} size={40} />
               <View style={{ flex: 1 }}>
-                <RNText style={s.shopN}>{p.name}</RNText>
-                <Text
-                  style={s.sub}>{Number(p.online_qty) <= 0 ? 'Out of stock' : 'Only ' + qtyLabel(Number(p.online_qty), p.unit) + ' left'}</Text>
+                <RNText style={{ color: '#f4f8ff', fontWeight: '800', fontSize: 14 }}>{p.name}</RNText>
+                <Text style={{ color: '#c5d8ee', fontSize: 12, marginTop: 3 }}>{Number(p.online_qty) <= 0 ? 'Out of stock' : 'Only ' + qtyLabel(Number(p.online_qty), p.unit) + ' left'}</Text>
               </View>
               <Btn small t="+10" onPress={() => addStock(p)} />
             </View>
@@ -4112,7 +4120,8 @@ offerUntil: p && p.offer_expires_at ? String(p.offer_expires_at).slice(0, 10) : 
     if (busy) return;
     const price = Number(f.price), oq = parseFloat(f.oq), sq = parseFloat(f.sq) || 0;
     const op = f.op ? Number(f.op) : 0;
-    const discount = f.discount ? Number(f.discount) : 0;
+    const manualDiscount = f.discount ? Number(f.discount) : 0;
+    const discount = manualDiscount > 0 ? manualDiscount : (op > price && price > 0 ? Math.round((op - price) / op * 100) : 0);
 const offerUntil = f.offerUntil.trim();
 
 if (!Number.isFinite(discount) || discount < 0 || discount > 90) {
@@ -4194,6 +4203,10 @@ offer_expires_at: discount > 0 ? offerUntil : null,
           style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{UNITS.map((u) => <Chip key={u} t={u} on={f.unit === u} onPress={() => set('unit')(u)} />)}</View>
         <Field label={'Price (₹ per ' + unitLabel(f.unit) + ')'} value={f.price} onChangeText={set('price')} keyboardType="decimal-pad" />
         <Field label="Original price (₹, optional)" value={f.op} onChangeText={set('op')} keyboardType="decimal-pad" />
+        {Number(f.op) > Number(f.price) && Number(f.price) > 0 && <View style={{ backgroundColor: '#123d50', borderColor: '#1b9c9b', borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 10 }}>
+          <RNText style={{ color: '#8ff0d5', fontWeight: '900' }}>🔥 {Math.round((Number(f.op) - Number(f.price)) / Number(f.op) * 100)}% discount will be highlighted</RNText>
+          <Text style={{ color: '#d0e6f2', fontSize: 12, marginTop: 3 }}>{money(Number(f.op))} → {money(Number(f.price))}</Text>
+        </View>}
         <Field
   label="Offer Discount (%)"
   value={f.discount}
