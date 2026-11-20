@@ -2343,6 +2343,11 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
             </View>
           </View>
           {!!shop.offer && <RNText style={{ color: '#fff', marginTop: 10 }}>🎁 {shop.offer}</RNText>}
+          {cnt > 0 && <TouchableOpacity onPress={onCart} activeOpacity={0.88}
+            style={{ marginTop: 14, backgroundColor: '#20c5d8', borderRadius: 15, minHeight: 48, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', shadowColor: '#20c5d8', shadowOpacity: 0.24, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4 }}>
+            <RNText style={{ color: '#06213d', fontWeight: '900', fontSize: 13 }}>🛒 {cnt} {cnt === 1 ? 'item' : 'items'} · {money(tot)}</RNText>
+            <RNText style={{ color: '#06213d', fontWeight: '900', fontSize: 14 }}>View Cart →</RNText>
+          </TouchableOpacity>}
         </View>
         {!shop.is_open && <Msg t="The shop is closed right now." />}
         <KhataApply shop={shop} profile={profile} />
@@ -2420,12 +2425,7 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
         </View>
         <View style={{ height: 90 }} />
       </ScrollView>
-      {cnt > 0 && (
-        <TouchableOpacity style={s.cartBar} onPress={onCart}>
-          <Text style={s.cartBarT}>{cnt + ' items •'} {money(tot)}</Text>
-          <Text style={s.cartBarT}>View Cart →</Text>
-        </TouchableOpacity>
-      )}
+
       {sheet && (
         <QtySheet
           p={sheet}
