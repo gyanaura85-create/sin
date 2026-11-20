@@ -30,7 +30,7 @@
  *
  * alter table shops add column if not exists photo_url text;
  *
- * create or replace function update_my_shop_photo(p_shop_id uuid, p_photo_url text) returns json
+ * create or replace function update_my_shop_photo(p_shop_id text, p_photo_url text) returns json
  * language plpgsql security definer set search_path = public as $$
  * begin
  *   update shops set photo_url = nullif(trim(p_photo_url), '') where id = p_shop_id and owner_id = auth.uid();
