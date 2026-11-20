@@ -359,29 +359,24 @@ function choosePhoto(opt) {
 
 
 // QR Code: Gallery only
-const pickQrImage = () =>
-  pickImage({
-    quality: 0.5,
-    maxLen: 900000,
-  });
+const pickQrImage = async () => {
+  const data = await pickImage({ quality: 0.5, maxLen: 900000 });
+  return data ? uploadNearKartImage(data, 'qr') : null;
+};
 
 
 // Shop Photo: Camera + Gallery
-const pickShopPhoto = () =>
-  choosePhoto({
-    aspect: [1, 1],
-    quality: 0.4,
-    maxLen: 450000,
-  });
+const pickShopPhoto = async () => {
+  const data = await choosePhoto({ aspect: [1, 1], quality: 0.4, maxLen: 450000 });
+  return data ? uploadNearKartImage(data, 'shop') : null;
+};
 
 
 // Product Photo: Camera + Gallery
-const pickProductPhoto = () =>
-  choosePhoto({
-    aspect: [1, 1],
-    quality: 0.35,
-    maxLen: 300000,
-  });
+const pickProductPhoto = async () => {
+  const data = await choosePhoto({ aspect: [1, 1], quality: 0.35, maxLen: 300000 });
+  return data ? uploadNearKartImage(data, 'products') : null;
+};
 
 // Advertisement photo: horizontal banner, JPEG, maximum 500 KB.
 async function pickAdPhoto() {
@@ -955,6 +950,29 @@ async function api(path, opt = {}) {
   }
 }
 const rpc = (name, body) => api('/rest/v1/rpc/' + name, { method: 'POST', body: body || {} });
+
+// NearKart image storage (separate Supabase project; public key only).
+const IMAGE_URL = 'https://gaizxgufrqmmqptcycnm.supabase.co';
+const IMAGE_KEY = 'sb_publishable_Ut-JmbeEfQ84Z8zoj8johg_gsKDlzQt';
+async function uploadNearKartImage(dataUri, folder) {
+  if (!dataUri || typeof dataUri !== 'string' || dataUri.indexOf('data:image/') !== 0) return dataUri || null;
+  if (!SESSION || !SESSION.token) throw new Error('Please log in again before uploading an image.');
+  await api('/auth/v1/user'); // refresh the main NearKart session if needed
+  const response = await fetch(IMAGE_URL + '/functions/v1/upload-nearkart-image', {
+    method: 'POST',
+    headers: {
+      apikey: IMAGE_KEY,
+      Authorization: 'Bearer ' + SESSION.token,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ data_uri: dataUri, folder }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.url) {
+    throw new Error(result.error || 'Image upload failed. Please try again.');
+  }
+  return result.url;
+}
 async function registerPushToken() {
   if (!Notif || !Dev || !Dev.isDevice || !SESSION || !SESSION.uid) return;
 
