@@ -2287,8 +2287,9 @@ function QtySheet({ p, initial, onClose, onAdd }) {
 // ======================================================================
 // BUYER: SHOP PAGE (with product photos and customer reviews)
 // ======================================================================
-function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
+function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart, profile, session, needLogin }) {
   const [ps, setPs] = useState([]);
+  const [showTransactions, setShowTransactions] = useState(false);
   const [ld, setLd] = useState(true);
   const [err, setErr] = useState('');
   const [cat, setCat] = useState('All');
@@ -2318,6 +2319,8 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
   const mine = cart && cart.shops && cart.shops[shop.id] ? cart.shops[shop.id].items : {};
   const cnt = Object.keys(mine).length;
   const tot = Object.values(mine).reduce((t, i) => t + i.p.price * i.qty, 0);
+
+  if (showTransactions) return <BuyerShopTransactions shop={shop} session={session} needLogin={needLogin} onBack={() => setShowTransactions(false)} />;
 
   return (
     <View style={{ flex: 1 }}>
@@ -2350,6 +2353,10 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
         </View>
         {!shop.is_open && <Msg t="The shop is closed right now." />}
         <KhataApply shop={shop} profile={profile} />
+        <TouchableOpacity onPress={() => setShowTransactions(true)} activeOpacity={0.86} style={[s.card, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderColor: '#237f9a' }]}>
+          <View style={{ flex: 1 }}><Text style={s.h}>🧾 My Transactions</Text><Text style={s.sub}>View your orders and payment details from this shop</Text></View>
+          <RNText style={{ color: BLUE, fontSize: 22, fontWeight: '900' }}>›</RNText>
+        </TouchableOpacity>
 
         <View style={s.card}>
           <TextInput
@@ -2410,6 +2417,59 @@ function ShopScreen({ shop, focusId, cart, onBack, onAdd, onCart,profile }) {
           onAdd={(p, qty) => { onAdd(shop, p, qty); setSheet(null); }}
         />
       )}
+    </View>
+  );
+}
+
+// ======================================================================
+// BUYER: transactions with one particular shop (existing payment records)
+// ======================================================================
+function TransactionCard({ o, seller }) {
+  const [pinfo] = useOrderPay(o);
+  const upi = o.pay === 'upi';
+  const paid = upi && isPaid(pinfo.status || o.payment_status);
+  const rejected = upi && isRejectedPay(pinfo.status || o.payment_status);
+  const items = o.order_items || [];
+  return (
+    <View style={s.card}>
+      <View style={s.rowB}>
+        <View style={{ flex: 1 }}><RNText style={s.shopN}>{orderNo(o)}</RNText><RNText style={s.sub}>{when(o.created_at)}</RNText></View>
+        <Text style={s.price}>{money(o.total)}</Text>
+      </View>
+      {seller && <View style={{ marginTop: 9, padding: 10, borderRadius: 12, backgroundColor: BG }}><RNText style={s.shopN}>{o.customer_name || 'Buyer'}</RNText>{!!o.phone && <RNText style={s.sub}>{o.phone}</RNText>}</View>}
+      <View style={{ marginTop: 8 }}>{items.map((it, i) => <View key={String(it.id || it.product_id || i)} style={[s.rowB, { paddingVertical: 5 }]}><View style={{ flex: 1 }}><RNText style={{ color: INK, fontWeight: '700' }}>{it.name || 'Product'}</RNText><RNText style={s.sub}>{qtyLabel(Number(it.qty || 0), it.unit || 'piece')} × {money(Number(it.price || 0))}</RNText></View><RNText style={s.price}>{money(Number(it.price || 0) * Number(it.qty || 0))}</RNText></View>)}</View>
+      <View style={{ borderTopWidth: 1, borderTopColor: LINE, marginTop: 8, paddingTop: 10 }}>
+        <View style={s.rowB}><Text style={s.sub}>Payment mode</Text><RNText style={{ color: INK, fontWeight: '800' }}>{upi ? 'Online · UPI' : o.pay === 'khata' ? 'Khata · Offline credit' : 'Offline · Cash / COD'}</RNText></View>
+        {upi && <><View style={[s.rowB, { marginTop: 7 }]}><Text style={s.sub}>UTR number</Text><RNText selectable style={{ color: INK, fontWeight: '800' }}>{pinfo.utr || 'Not submitted'}</RNText></View><View style={[s.rowB, { marginTop: 7 }]}><Text style={s.sub}>Payment status</Text>{paid ? <Tag t="Confirmed" kind="g" /> : rejected ? <Tag t="Not received" kind="r" /> : <Tag t="Pending verification" kind="y" />}</View></>}
+        {!upi && <View style={[s.rowB, { marginTop: 7 }]}><Text style={s.sub}>Payment status</Text><Tag t={o.pay === 'khata' ? 'Added to Khata' : 'Cash on delivery'} kind="b" /></View>}
+      </View>
+    </View>
+  );
+}
+
+function BuyerShopTransactions({ shop, session, needLogin, onBack }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const load = useCallback(() => {
+    if (!session) { setOrders([]); return; }
+    setLoading(true); setErr('');
+    rpc('get_my_orders_paginated', { p_limit: 100, p_offset: 0 })
+      .then((r) => setOrders(unwrapList(r).map(normOrder).filter((o) => String(o.shop_id) === String(shop.id))))
+      .catch((e) => setErr(errMsg(e))).finally(() => setLoading(false));
+  }, [session, shop.id]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <View style={{ flex: 1, backgroundColor: BG }}>
+      <Head title="My Transactions" sub={shop.name + ' · Your order history'} color={TEAL} onBack={onBack} right={<TouchableOpacity onPress={load}><Text style={{ color: '#fff', fontWeight: '800' }}>↻</Text></TouchableOpacity>} />
+      {!session ? <View style={s.card}><Text style={s.empty}>Login to see your transactions with this shop.</Text><Btn t="Login" onPress={needLogin} /></View> :
+        <ScrollView style={{ flex: 1 }} refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}>
+          <Msg t={err} />
+          {loading && orders.length === 0 && <ActivityIndicator color={BLUE} style={{ marginTop: 24 }} />}
+          {!loading && !err && orders.length === 0 && <Text style={s.empty}>No transactions with this shop yet.</Text>}
+          {orders.map((o) => <TransactionCard key={o.id} o={o} seller={false} />)}
+          <View style={{ height: 24 }} />
+        </ScrollView>}
     </View>
   );
 }
@@ -4852,7 +4912,7 @@ function SellerNotifications({ os, products, vib, setVib, openOrder, goInventory
 }
 
 // ---------- Seller: More tab = seller profile ----------
-function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloadP, page, setPage, openOrder }) {
+function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloadP, page, setPage, openOrder, loadOrders, hasMoreOrders, loadMoreOrders }) {
   const [vib, setVib] = useState(PREF.vib);
   const [payOpen, setPayOpen] = useState(false);
   const [pay, setPay] = useState({ upi_id: shop.upi_id || null, qr_url: shop.qr_url || null });
@@ -4902,6 +4962,7 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloa
   if (page === 'deals') return <SellerDeals shop={shop} setShop={setShop} onBack={back} />;
   if (page === 'sales') return <SellerSales os={os} onBack={back} />;
   if (page === 'reviews') return <SellerReviews shop={shop} onBack={back} />;
+  if (page === 'transactions') return <SellerTransactions shop={shop} os={os} load={loadOrders} hasMore={hasMoreOrders} loadMore={loadMoreOrders} onBack={back} />;
   if (page === 'support') return <SupportPage onBack={back} color={TEAL} />;
   if (page === 'privacy') return <PrivacyPolicyPage onBack={back} color={BLUE} />;
   if (page === 'notif') {
@@ -4953,6 +5014,7 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloa
         <View style={{ height: 10 }} />
         <Btn t={hasPay ? 'Edit UPI ID & QR code' : 'Add UPI ID & QR code'} onPress={() => { setPmsg(''); setPayOpen(true); }}
           style={{ minHeight: 48 }} />
+        <Btn kind="o" t="🧾 View Transactions" onPress={() => setPage('transactions')} style={{ minHeight: 44, marginTop: 9 }} />
       </View>
 
       <Text style={[s.h, { marginHorizontal: 14, marginTop: 14, marginBottom: 0 }]}>Shop Management</Text>
@@ -4990,6 +5052,23 @@ function SellerMore({ shop, setShop, lang, onLang, onLogout, os, products, reloa
         <PaymentSheet shop={shop} initial={pay} onClose={() => setPayOpen(false)} onSaved={saved} />
       )}
     </ScrollView>
+  );
+}
+
+// ======================================================================
+// SELLER: transactions for this shop (existing seller order feed only)
+// ======================================================================
+function SellerTransactions({ shop, os, load, hasMore, loadMore, onBack }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: BG }}>
+      <Head title="Shop Transactions" sub={shop.name + ' · Buyer and payment details'} color={TEAL} onBack={onBack} right={<TouchableOpacity onPress={load}><Text style={{ color: '#fff', fontWeight: '800' }}>↻</Text></TouchableOpacity>} />
+      <ScrollView style={{ flex: 1 }} refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
+        {(os || []).length === 0 && <Text style={s.empty}>No transactions found.</Text>}
+        {(os || []).map((o) => <TransactionCard key={o.id} o={o} seller />)}
+        {!!hasMore && <View style={{ padding: 14 }}><Btn kind="o" t="Load more transactions" onPress={loadMore} /></View>}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    </View>
   );
 }
 
@@ -5165,7 +5244,8 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
       onRequireSubscription={() => setSubscriptionOpen(true)} />;
   } else {
     body = <SellerMore shop={shop} setShop={setShop} lang={lang} onLang={onLang} onLogout={onLogout}
-      os={os} products={products} reloadP={reloadP} page={morePage} setPage={setMorePage} openOrder={openOrder} />;
+      os={os} products={products} reloadP={reloadP} page={morePage} setPage={setMorePage} openOrder={openOrder}
+      loadOrders={load} hasMoreOrders={hasMore} loadMoreOrders={loadMore} />;
   }
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
@@ -6025,7 +6105,7 @@ export default function App() {
       onBack={() => setPage(null)} />;
   } else if (shopSel) {
     body = <ShopScreen key={shopSel.id + ':' + (focusId || '')} shop={shopSel} focusId={focusId} cart={cart}
-      profile={profile} onAdd={addToCart}
+      profile={profile} session={session} needLogin={needLogin} onAdd={addToCart}
       onBack={() => { setShopSel(null); setFocusId(null); }}
       onCart={() => { setShopSel(null); setFocusId(null); setTab('cart'); }} />;
   } else if (tab === 'home') {
