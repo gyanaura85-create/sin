@@ -113,9 +113,9 @@ const SPAGE = 20;       // seller orders page size
 const SUPPORT_EMAIL = 'ssupportnearkert@gmail.com';
 const SUPPORT_PHONE = '8144937920';
 
-const BLUE = '#2563eb', DARK = '#173b82', INK = '#172b4d', MUTE = '#64748b';
-const BG = '#e9edf2', SURFACE = '#f0f2f5', LINE = '#e3eaf4', GREEN = '#0f9668', RED = '#d9485f', LIME = '#8be0a2', ORANGE = '#e8872b';
-const PURPLE = '#7656d6', TEAL = '#159b9a', PINK = '#dc5b91', AMBER = '#e6a23c', GOLD = '#f5b942';
+const BLUE = '#20c5df', DARK = '#08295b', INK = '#f3f7ff', MUTE = '#a9bdd8';
+const BG = '#07172f', SURFACE = '#122b4d', LINE = '#294768', GREEN = '#00c99a', RED = '#ff647c', LIME = '#8be0c0', ORANGE = '#ff9b52';
+const PURPLE = '#9277ff', TEAL = '#19c9c3', PINK = '#f178b8', AMBER = '#f0ad4e', GOLD = '#ffd166';
 
 // ----------------------------------------------------------------------
 // KHATA database functions: the function names are the ones that exist in Supabase.
@@ -1347,21 +1347,28 @@ function shopDistanceKm(shop, loc) {
 // SMALL UI PARTS
 // ======================================================================
 function Btn({ t, onPress, kind, disabled, small, style }) {
+  const pressScale = useRef(new Animated.Value(1)).current;
+  const pressIn = () => Animated.spring(pressScale, { toValue: 0.965, useNativeDriver: true, speed: 28, bounciness: 4 }).start();
+  const pressOut = () => Animated.spring(pressScale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 5 }).start();
   return (
-    <TouchableOpacity
-      disabled={disabled}
-      onPress={onPress}
-      activeOpacity={0.8}
-      style={[s.btn, small && s.btnS, kind === 'o' && s.btnO,
-        kind === 'g' && { backgroundColor: GREEN }, kind === 'r' && s.btnR,
-        kind === 'w' && { backgroundColor: SURFACE },
-        kind === 'x' && { backgroundColor: '#cfd6e4' }, disabled && { opacity: 0.5 }, style]}
-    >
-      <Text
-        style={[s.btnT, kind === 'o' && { color: BLUE }, kind === 'r' && { color: RED },
-          kind === 'w' && { color: BLUE },
-          kind === 'x' && { color: MUTE }]}>{t}</Text>
-    </TouchableOpacity>
+    <Animated.View style={{ transform: [{ scale: pressScale }] }}>
+      <TouchableOpacity
+        disabled={disabled}
+        onPress={onPress}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+        activeOpacity={0.9}
+        style={[s.btn, small && s.btnS, kind === 'o' && s.btnO,
+          kind === 'g' && { backgroundColor: GREEN }, kind === 'r' && s.btnR,
+          kind === 'w' && { backgroundColor: SURFACE },
+          kind === 'x' && { backgroundColor: '#334b6b' }, disabled && { opacity: 0.5 }, style]}
+      >
+        <Text
+          style={[s.btnT, kind === 'o' && { color: '#72e4f3' }, kind === 'r' && { color: RED },
+            kind === 'w' && { color: INK },
+            kind === 'x' && { color: MUTE }]}>{t}</Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 function Field({ label, ...p }) {
@@ -6024,7 +6031,7 @@ export default function App() {
 // ======================================================================
 const s = StyleSheet.create({
   btn: { backgroundColor: BLUE, borderRadius: 15, paddingVertical: 13, paddingHorizontal: 17,
-    alignItems: 'center', justifyContent: 'center', minHeight: 48, shadowColor: '#1d4ed8', shadowOpacity: 0.12, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+    alignItems: 'center', justifyContent: 'center', minHeight: 48, shadowColor: BLUE, shadowOpacity: 0.28, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   btnS: { paddingVertical: 8, paddingHorizontal: 12, minHeight: 36, borderRadius: 12 },
   btnO: { backgroundColor: SURFACE, borderWidth: 1.5, borderColor: BLUE },
   btnR: { backgroundColor: SURFACE, borderWidth: 1.5, borderColor: RED },
@@ -6044,7 +6051,7 @@ const s = StyleSheet.create({
   headT: { color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 8 },
   rowB: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   card: { backgroundColor: SURFACE, borderRadius: 20, borderWidth: 1, borderColor: LINE, padding: 15,
-    marginHorizontal: 14, marginTop: 13, shadowColor: '#20365d', shadowOpacity: 0.045, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
+    marginHorizontal: 14, marginTop: 13, shadowColor: '#020817', shadowOpacity: 0.24, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
   h: { fontSize: 17, fontWeight: '800', color: INK, marginBottom: 8 },
   sub: { fontSize: 12.5, color: MUTE },
   shopN: { fontSize: 16, fontWeight: '800', color: INK },
@@ -6053,7 +6060,7 @@ const s = StyleSheet.create({
   price: { fontWeight: '800', color: INK, fontSize: 15 },
   offer: { color: ORANGE, fontWeight: '700', marginTop: 4, fontSize: 12 },
   shopCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: SURFACE, borderRadius: 19,
-    borderWidth: 1, borderColor: LINE, padding: 13, marginBottom: 11, shadowColor: '#20365d', shadowOpacity: 0.04, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+    borderWidth: 1, borderColor: LINE, padding: 13, marginBottom: 11, shadowColor: '#020817', shadowOpacity: 0.22, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   mini: { width: '48.5%', backgroundColor: SURFACE, borderRadius: 18, borderWidth: 1, borderColor: LINE,
     padding: 11, marginBottom: 11 },
   miniN: { fontSize: 14, fontWeight: '800', color: INK },
@@ -6066,7 +6073,7 @@ const s = StyleSheet.create({
   banner: { marginHorizontal: 14, marginTop: 12, backgroundColor: '#e3f4e8', flexDirection: 'row',
     alignItems: 'center', borderRadius: 20, padding: 18 },
   hello: { color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 14 },
-  searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: SURFACE, borderRadius: 14,
+  searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#19365b', borderRadius: 14,
     paddingHorizontal: 12, marginTop: 14, gap: 8, height: 48 },
   searchIn: { flex: 1, fontSize: 14, color: INK, paddingVertical: 8 },
   avatarS: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.2)',
@@ -6092,10 +6099,10 @@ const s = StyleSheet.create({
   cartBar: { position: 'absolute', left: 14, right: 14, bottom: 12, backgroundColor: GREEN, borderRadius: 16,
     padding: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cartBarT: { color: '#fff', fontWeight: '800' },
-  okOuter: { width: 110, height: 110, borderRadius: 55, backgroundColor: '#c9f0d8', alignItems: 'center',
+  okOuter: { width: 110, height: 110, borderRadius: 55, backgroundColor: '#123f50', borderWidth: 1, borderColor: '#1e9c91', alignItems: 'center',
     justifyContent: 'center' },
   okInner: { width: 80, height: 80, borderRadius: 40, backgroundColor: GREEN, alignItems: 'center',
-    justifyContent: 'center' },
+    justifyContent: 'center', shadowColor: GREEN, shadowOpacity: 0.55, shadowRadius: 16, shadowOffset: { width: 0, height: 0 }, elevation: 8 },
   dot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#cfd6e4', backgroundColor: SURFACE,
     alignItems: 'center', justifyContent: 'center' },
   sdot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#cfd6e4',
@@ -6117,10 +6124,10 @@ const s = StyleSheet.create({
   sec: { marginHorizontal: 14, marginTop: 14, marginBottom: 6 },
   alertBar: { backgroundColor: ORANGE, padding: 12, flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'center' },
-  tabbar: { flexDirection: 'row', backgroundColor: SURFACE, borderTopWidth: 1, borderTopColor: LINE,
+  tabbar: { flexDirection: 'row', backgroundColor: '#0a203e', borderTopWidth: 1, borderTopColor: LINE,
     paddingTop: 7, paddingBottom: Platform.OS === 'android' ? 9 : 14, paddingHorizontal: 4 },
   tab: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 52 },
   tabIconWrap: { width: 42, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  tabIconWrapOn: { backgroundColor: '#eaf1ff' },
+  tabIconWrapOn: { backgroundColor: '#174c70', borderWidth: 1, borderColor: '#20c5df' },
   tabT: { fontSize: 10, color: MUTE, marginTop: 3 },
 });
