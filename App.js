@@ -6005,7 +6005,7 @@ export default function App() {
   }
 
   // ---------- buyer ----------
-  const cartCount = cart && cart.items ? Object.keys(cart.items).length : 0;
+  const cartCount = cart && cart.shops ? Object.values(cart.shops).reduce((n, g) => n + Object.keys((g && g.items) || {}).length, 0) : 0;
   const offerCount = shops.filter(isOfferLive).length;
   let body = null;
   if (done) {
