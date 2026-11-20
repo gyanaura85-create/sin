@@ -1009,7 +1009,7 @@ const SHOP_RPC = {
   list: 'get_public_shops',     // ()                                   -> all public shops (json array)
   mine: 'get_my_shop',          // ()                                   -> the signed-in owner's shop (json)
   create: 'register_my_shop',   // (p_name, p_owner_name, p_phone, p_area, p_category, p_photo_url) -> shop (json)
-  update: 'update_my_shop',     // (p_shop_id, p_is_open, p_offer, p_update_offer) -> shop (json)
+  update: 'update_my_shop',     // (p_shop_id, p_is_open, p_offer, p_update_offer, p_offer_end_date, p_update_offer_end_date) -> shop (json)
 };
 async function shopRpc(kind, body) {
   try {
@@ -3700,7 +3700,17 @@ async function bumpStock(shop, p, reload) {
 }
 // save the shop offer / open flag (existing update_my_shop RPC)
 async function patchShop(shop, setShop, b) {
-  const body = { p_shop_id: shop.id };
+  // Always send all six named arguments so PostgREST selects the
+  // six-argument function unambiguously. False/null preserve existing
+  // offer-expiry values unless the caller explicitly updates them.
+  const body = {
+    p_shop_id: shop.id,
+    p_is_open: null,
+    p_offer: null,
+    p_update_offer: false,
+    p_offer_end_date: null,
+    p_update_offer_end_date: false,
+  };
 
   if ('is_open' in b) body.p_is_open = b.is_open;
 
