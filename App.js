@@ -2132,6 +2132,32 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
 // ======================================================================
 // BUYER: CATEGORIES (a shop is listed under EVERY category it sells)
 // ======================================================================
+function CategoryTile({ category, count, onPress }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pressIn = () => Animated.spring(scale, { toValue: 0.975, useNativeDriver: true, speed: 28, bounciness: 4 }).start();
+  const pressOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 5 }).start();
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        activeOpacity={0.92}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+        onPress={onPress}
+        style={[s.shopCard, { backgroundColor: '#102b4d', borderColor: '#294d70', borderWidth: 1, borderRadius: 22, padding: 14, marginBottom: 14, minHeight: 112, shadowColor: '#020817', shadowOpacity: 0.24, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 3 }]}
+      >
+        <View style={{ width: 76, height: 76, borderRadius: 22, backgroundColor: '#193e65', borderWidth: 1, borderColor: '#37638b', alignItems: 'center', justifyContent: 'center' }}>
+          <RNText style={{ fontSize: 34 }}>{category.ic}</RNText>
+        </View>
+        <View style={{ flex: 1, paddingLeft: 2 }}>
+          <Text style={{ color: '#f5f9ff', fontSize: 17, fontWeight: '800' }}>{category.k}</Text>
+          <Text style={{ color: '#a9c5e3', fontSize: 12, fontWeight: '600', marginTop: 5 }}>{count + ' shops'}</Text>
+        </View>
+        <RNText style={{ color: '#68dff0', fontSize: 27, fontWeight: '500' }}>›</RNText>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
 function Categories({ shops, onShop, initial, clearInitial }) {
   const [sel, setSel] = useState(initial || null);
   useEffect(() => { if (initial) { setSel(initial); clearInitial(); } }, [initial]);
@@ -2167,18 +2193,7 @@ function Categories({ shops, onShop, initial, clearInitial }) {
       <View style={{ padding: 14 }}>
         {CATS.map((c) => {
           const n = shops.filter((x) => shopCats(x).includes(c.k)).length;
-          return (
-            <TouchableOpacity key={c.k} style={[s.shopCard, { backgroundColor: c.bg, borderColor: 'transparent' }]} onPress={() => setSel(c.k)}>
-              <View style={[s.mic, { backgroundColor: SURFACE, width: 60, height: 60, borderRadius: 18 }]}>
-                <RNText style={{ fontSize: 28 }}>{c.ic}</RNText>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.shopN}>{c.k}</Text>
-                <Text style={[s.sub, { color: INK }]}>{n + ' shops'}</Text>
-              </View>
-              <RNText style={{ color: INK, fontSize: 22 }}>›</RNText>
-            </TouchableOpacity>
-          );
+          return <CategoryTile key={c.k} category={c} count={n} onPress={() => setSel(c.k)} />;
         })}
       </View>
     </ScrollView>
