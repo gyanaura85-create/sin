@@ -963,6 +963,7 @@ async function uploadNearKartImage(dataUri, folder) {
     headers: {
       apikey: IMAGE_KEY,
       Authorization: 'Bearer ' + SESSION.token,
+      'x-main-apikey': KEY,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ data_uri: dataUri, folder }),
