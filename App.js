@@ -4291,8 +4291,8 @@ offer_expires_at: discount > 0 ? offerUntil : null,
           <Photo url={masterProduct.image_url} name={masterProduct.name} size={64} />
           <View style={{ flex: 1 }}><Text style={s.h}>{masterProduct.name}</Text><Text style={s.sub}>{masterProduct.category}</Text><Text style={s.sub}>Add your shop's price and stock below.</Text></View>
         </View>}
-        {p && <>
-          <Field label="Name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
+        {(p || (!masterProduct && !p)) && <>
+          <Field label="Product name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
           <Text style={s.label}>Category</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => set('cat')(c)} />)}</View>
         </>}
@@ -4322,7 +4322,7 @@ offer_expires_at: discount > 0 ? offerUntil : null,
 }
 
 // ---------- Seller: choose an Admin Master Product before adding to shop ----------
-function MasterProductPicker({ products, onClose, onSelect }) {
+function MasterProductPicker({ products, onClose, onSelect, onAddNew }) {
   const [rows, setRows] = useState([]);
   const [category, setCategory] = useState('all');
   const [query, setQuery] = useState('');
@@ -4347,6 +4347,7 @@ function MasterProductPicker({ products, onClose, onSelect }) {
     <Sheet onClose={onClose}>
       <View style={s.rowB}><Text style={s.h}>Choose a Product</Text><TouchableOpacity onPress={onClose}><Text style={{ color: MUTE }}>Close</Text></TouchableOpacity></View>
       <Text style={[s.sub, { marginTop: 4, marginBottom: 10 }]}>Admin catalogue products. Products already added to your shop are hidden.</Text>
+      <Btn kind="o" t="+ Add New Product (not in catalogue)" onPress={onAddNew} style={{ marginBottom: 10 }} />
       <Field label="Search products" value={query} onChangeText={setQuery} placeholder="Search product name..." />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
         <Chip t="All" on={category === 'all'} color={PURPLE} onPress={() => setCategory('all')} />
@@ -4478,7 +4479,8 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
         <View style={{ height: 30 }} />
       </ScrollView>
       {addOpen && <MasterProductPicker products={products} onClose={() => setAddOpen(false)}
-        onSelect={(item) => { setSelectedMaster(item); setAddOpen(false); }} />}
+        onSelect={(item) => { setSelectedMaster(item); setAddOpen(false); }}
+        onAddNew={() => { setSelectedMaster({ manual: true }); setAddOpen(false); }} />}
       {(selectedMaster || edit) && (
         <ProductForm shop={shop} setShop={setShop} product={edit} masterProduct={selectedMaster}
           onClose={() => { setEdit(null); setSelectedMaster(null); setAddOpen(false); }} onDone={done} />
