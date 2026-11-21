@@ -5925,14 +5925,32 @@ export default function App() {
   const lastUrl = useRef('');
 
   // ---------- data ----------
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (force = true) => {
+    const cacheKey = 'buyer_market_data';
+    const now = Date.now();
+    if (!force) {
+      try {
+        const rawCache = await store.get(cacheKey);
+        if (rawCache) {
+          const cached = JSON.parse(rawCache);
+          if (Array.isArray(cached.shops) && Array.isArray(cached.products)) {
+            setShops(cached.shops);
+            setProducts(cached.products);
+            setErr('');
+            if (cached.savedAt && now - cached.savedAt < 60000) { setLoading(false); return; }
+          }
+        }
+      } catch (e) { /* ignore invalid local cache */ }
+    }
     setLoading(true);
     try {
       const list = unwrapList(await shopRpc('list'));
-      setShops(list);
       const p = await api('/rest/v1/products?active=eq.true&select=*&order=created_at.desc&limit=60');
-      setProducts(withShopNames(p, list));
+      const namedProducts = withShopNames(p, list);
+      setShops(list);
+      setProducts(namedProducts);
       setErr('');
+      store.set(cacheKey, JSON.stringify({ shops: list, products: namedProducts, savedAt: Date.now() }));
     } catch (e) { setErr(errMsg(e)); }
     setLoading(false);
   }, []);
@@ -6003,7 +6021,7 @@ export default function App() {
       if (sl && TR[sl]) { LANG = sl; setLangState(sl); }
       const sloc = await store.get('loc');
       if (sloc) { try { setLoc(JSON.parse(sloc)); } catch (e) { /* ignore broken saved location */ } }
-      loadData();
+      loadData(false);
       const ss = await store.get('session');
       if (ss) {
         let sess = null;
