@@ -397,7 +397,7 @@ async function pickAdPhoto() {
       const out = await ImgManip.manipulateAsync(asset.uri, [{ resize: { width: widths[i] } }],
         { compress: qualities[j], format: ImgManip.SaveFormat ? ImgManip.SaveFormat.JPEG : 'jpeg', base64: true });
       const bytes = base64Bytes(out && out.base64);
-      if (out && out.uri && bytes > 0 && bytes <= 500 * 1024) return { uri: out.uri, bytes };
+      if (out && out.uri && out.base64 && bytes > 0 && bytes <= 500 * 1024) return { uri: out.uri, bytes, dataUri: 'data:image/jpeg;base64,' + out.base64 };
     }
   }
   throw new Error('Photo ko 500 KB ke andar compress nahi kar paye. Dusri photo try karo.');
@@ -3748,25 +3748,14 @@ async function patchShop(shop, setShop, b) {
   setShop(r && r.id ? { ...shop, ...r } : { ...shop, ...b });
 }
 
-// Upload advertisement banners to the existing offer-media bucket.
+// Upload advertisement banners to the separate NearKart Images project.
 async function uploadOfferPhoto(shop, photo) {
-  await api('/auth/v1/user'); // refresh session if it is close to expiry
-  const path = String(shop.id) + '/advertisement-' + Date.now() + '.jpg';
-  const blob = await fetch(photo.uri).then((r) => {
-    if (!r.ok) throw new Error('Could not read the compressed advertisement photo.');
-    return r.blob();
-  });
-  const response = await fetch(URL_ + '/storage/v1/object/offer-media/' +
-    path.split('/').map(encodeURIComponent).join('/'), {
-    method: 'POST',
-    headers: { apikey: KEY, Authorization: 'Bearer ' + (SESSION && SESSION.token),
-      'Content-Type': 'image/jpeg', 'x-upsert': 'false' },
-    body: blob,
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || data.error || 'Advertisement photo upload failed.');
-  return { url: URL_ + '/storage/v1/object/public/offer-media/' +
-    path.split('/').map(encodeURIComponent).join('/') };
+  if (!photo || !photo.dataUri) throw new Error('Advertisement photo data is missing. Please select the photo again.');
+  const url = await uploadNearKartImage(photo.dataUri, 'ads');
+  if (!url || typeof url !== 'string' || url.indexOf('https://') !== 0) {
+    throw new Error('Advertisement photo upload did not return a valid image URL.');
+  }
+  return { url };
 }
 
 async function removeOfferPhoto(url) {
