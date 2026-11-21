@@ -4369,7 +4369,7 @@ function MasterProductPicker({ products, onClose, onSelect, onAddNew }) {
 }
 
 // ---------- Seller: products table ----------
-function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen, perr, canManage, onRequireSubscription }) {
+function SellerProducts({ shop, setShop, products, reloadP, productsLoading, addOpen, setAddOpen, perr, canManage, onRequireSubscription }) {
   const [q, setQ] = useState('');
   const [fl, setFl] = useState('all');
   const [catFilter, setCatFilter] = useState('all');
@@ -4377,6 +4377,8 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
   const [edit, setEdit] = useState(null);
   const [selectedMaster, setSelectedMaster] = useState(null);
   const [msg, setMsg] = useState('');
+  const [visibleCount, setVisibleCount] = useState(20);
+  useEffect(() => { setVisibleCount(20); }, [q, fl, catFilter]);
   const stat = (p) => { if (p.active === false) return 'inactive'; const n = Number(p.online_qty); return n <= 0 ? 'out' : n <= Number(p.low_alert || 5) ? 'low' : 'in'; };
   const list = products.filter((p) => (!q || matchText((p.name || '') + ' ' + (p.category || ''), q)) &&
     (catFilter === 'all' || (p.category || 'Other') === catFilter) && (fl === 'all' || stat(p) === fl));
@@ -4444,8 +4446,9 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
             <Text style={[s.th, { flex: 1 }]}>Price</Text>
             <Text style={[s.th, { flex: 1.1 }]}>Status</Text>
           </View>
-          {list.length === 0 && <Text style={s.empty}>No products yet.</Text>}
-          {list.map((p) => {
+          {productsLoading && products.length === 0 && [1, 2, 3, 4].map((n) => <View key={'sk' + n} style={[s.trow, { opacity: 0.55 }]}><View style={{ flex: 2, gap: 7 }}><View style={{ width: 46, height: 46, borderRadius: 12, backgroundColor: '#294768' }} /><View style={{ height: 9, width: '70%', borderRadius: 6, backgroundColor: '#294768' }} /><View style={{ height: 7, width: '45%', borderRadius: 6, backgroundColor: '#203e60' }} /></View><View style={{ flex: 1.2, height: 12, borderRadius: 6, backgroundColor: '#294768' }} /><View style={{ flex: 1, height: 12, borderRadius: 6, backgroundColor: '#294768' }} /><View style={{ flex: 1.1, height: 20, borderRadius: 8, backgroundColor: '#294768' }} /></View>)}
+          {!productsLoading && list.length === 0 && <Text style={s.empty}>No products yet.</Text>}
+          {list.slice(0, visibleCount).map((p) => {
             const st = stat(p);
             return (
               <TouchableOpacity key={p.id} style={[s.trow, st === 'inactive' && { opacity: 0.6 }]} onPress={() => setEdit(p)} onLongPress={() => menu(p)} activeOpacity={0.8}>
@@ -4475,6 +4478,7 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
               </TouchableOpacity>
             );
           })}
+          {list.length > visibleCount && <Btn kind="o" t={'Load more (' + (list.length - visibleCount) + ' remaining)'} onPress={() => setVisibleCount((n) => n + 20)} />}
         </View>
         <View style={{ height: 30 }} />
       </ScrollView>
@@ -5272,17 +5276,39 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
   const [morePage, setMorePage] = useState(null);
   const [products, setProducts] = useState([]);
   const [perr, setPerr] = useState('');
+  const [productsLoading, setProductsLoading] = useState(true);
+  const productsCacheReady = useRef(false);
   const [addOpen, setAddOpen] = useState(false);
   const isSubActive = shop.subscription_status === 'active' &&
     !!shop.subscription_expires_at && new Date(shop.subscription_expires_at).getTime() > Date.now();
   const [subscriptionOpen, setSubscriptionOpen] = useState(!isSubActive);
   const { os, load, err: oerr, alertMsg, clearAlert, hasMore, loadMore } = useOrders(shop.id);
-  const reloadP = useCallback(() => {
-    rpc('seller_get_products', { p_shop_id: shop.id })
-      .then((r) => { setProducts(unwrapList(r)); setPerr(''); })
-      .catch((e) => setPerr(errMsg(e)));
+  const reloadP = useCallback(async (force) => {
+    const cacheKey = 'seller_products_' + shop.id;
+    const now = Date.now();
+    if (!productsCacheReady.current) {
+      productsCacheReady.current = true;
+      try {
+        const rawCache = await store.get(cacheKey);
+        if (rawCache) {
+          const cached = JSON.parse(rawCache);
+          if (Array.isArray(cached.rows)) setProducts(cached.rows);
+          if (!force && cached.savedAt && now - cached.savedAt < 60000) {
+            setProductsLoading(false);
+            return;
+          }
+        }
+      } catch (e) { /* ignore invalid local cache */ }
+    }
+    try {
+      const r = await rpc('seller_get_products', { p_shop_id: shop.id });
+      const rows = unwrapList(r);
+      setProducts(rows); setPerr('');
+      store.set(cacheKey, JSON.stringify({ rows, savedAt: Date.now() }));
+    } catch (e) { setPerr(errMsg(e)); }
+    finally { setProductsLoading(false); }
   }, [shop.id]);
-  useEffect(() => { reloadP(); }, [reloadP]);
+  useEffect(() => { reloadP(false); }, [reloadP]);
   useEffect(() => { if (isSubActive) setSubscriptionOpen(false); }, [isSubActive]);
   const newCount = os.filter((o) => o.status === 'new').length;
   const pick = (k) => {
@@ -5303,7 +5329,7 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
     body = <SellerOrders os={os} load={load} selId={selId} setSel={setSelId} err0={oerr}
       hasMore={hasMore} loadMore={loadMore} />;
   } else if (tab === 'products') {
-    body = <SellerProducts shop={shop} setShop={setShop} products={products} reloadP={reloadP}
+    body = <SellerProducts shop={shop} setShop={setShop} products={products} reloadP={reloadP} productsLoading={productsLoading}
       addOpen={addOpen} setAddOpen={setAddOpen} perr={perr} canManage={isSubActive}
       onRequireSubscription={() => setSubscriptionOpen(true)} />;
   } else {
