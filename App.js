@@ -4292,8 +4292,6 @@ offer_expires_at: discount > 0 ? offerUntil : null,
           <View style={{ flex: 1 }}><Text style={s.h}>{masterProduct.name}</Text><Text style={s.sub}>{masterProduct.category}</Text><Text style={s.sub}>Add your shop's price and stock below.</Text></View>
         </View>}
         {p && <>
-          <Text style={s.label}>Product photo</Text>
-          <PhotoPicker url={f.img} name={f.name || 'P'} size={90} onPick={pickPhoto} busy={pbusy} label="Upload product photo" onRemove={() => setF({ ...f, img: '' })} />
           <Field label="Name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
           <Text style={s.label}>Category</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => set('cat')(c)} />)}</View>
