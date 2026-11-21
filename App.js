@@ -1949,6 +1949,7 @@ function ProductTile({ p, onProduct }) {
         </View>}
       </View>
       <RNText style={[s.shopN, { marginTop: 8, fontSize: 14 }]} numberOfLines={1}>{p.name}</RNText>
+      {!!p.brand_name && <RNText style={[s.sub, { color: PURPLE, fontWeight: '700' }]} numberOfLines={1}>Brand: {p.brand_name}</RNText>}
       <RNText style={s.sub} numberOfLines={1}>{p.shops ? p.shops.name : ''}</RNText>
       <View style={[s.rowB, { marginTop: 6 }]}>
         <View style={{ flex: 1 }}>
@@ -2004,7 +2005,7 @@ function Home({ shops, products, loading, err, loc, onLoc, onShop, onProduct, on
   const fShops = shops.filter((x) =>
     (!ql || matchText(x.name + ' ' + catLabel(x) + ' ' + x.area, ql)) &&
     (!onlyOpen || x.is_open) && (!fcat || shopCats(x).includes(fcat)));
-  const pText = (p) => (p.name || '') + ' ' + (p.category || '');
+  const pText = (p) => (p.name || '') + ' ' + (p.category || '') + ' ' + (p.brand_name || '');
   const fProds = ql
     ? dedupeById([...products.filter((p) => matchText(pText(p), ql)), ...sp.filter((p) => matchText(pText(p), ql))])
     : products;
@@ -2267,6 +2268,7 @@ function QtySheet({ p, initial, onClose, onAdd }) {
           <Photo url={p.image_url} name={p.name} size={72} />
           <View style={{ flex: 1 }}>
             <RNText style={{ fontSize: 18, fontWeight: '800', color: INK }}>{p.name}</RNText>
+            {!!p.brand_name && <RNText style={[s.sub, { color: PURPLE, fontWeight: '700' }]}>Brand: {p.brand_name}</RNText>}
             <Text
               style={s.sub}>{money(p.price)} / {unitLabel(p.unit)} · Stock {qtyLabel(stock, p.unit)}</Text>
             {!!p.description && <RNText style={[s.sub, { marginTop: 2 }]} numberOfLines={2}>{p.description}</RNText>}
@@ -4193,7 +4195,7 @@ function SellerOrders({ os, load, selId, setSel, err0, hasMore, loadMore }) {
 function ProductForm({ shop, setShop, product, masterProduct, onClose, onDone }) {
   const p = product;
   const [f, setF] = useState({
-    name: p ? p.name : (masterProduct && masterProduct.name ? masterProduct.name : ''), cat: p && p.category ? p.category : (masterProduct && masterProduct.category ? masterProduct.category : PROD_CATS[0]), unit: p ? p.unit : 'kg',
+    name: p ? p.name : (masterProduct && masterProduct.name ? masterProduct.name : ''), brand: p ? (p.brand_name || '') : (masterProduct && masterProduct.brand_name ? masterProduct.brand_name : ''), cat: p && p.category ? p.category : (masterProduct && masterProduct.category ? masterProduct.category : PROD_CATS[0]), unit: p ? p.unit : 'kg',
     price: p ? num(Number(p.price)) : '', op: p && p.original_price ? num(Number(p.original_price)) : '',
     discount: p && p.discount_percent ? String(p.discount_percent) : '',
 offerUntil: p && p.offer_expires_at ? String(p.offer_expires_at).slice(0, 10) : '',
@@ -4240,7 +4242,7 @@ if (discount > 0) {
     if (!f.name.trim() || !(price > 0) || isNaN(oq) || oq < 0) { setMsg('Enter name, price and online stock'); return; }
     if (f.op && (isNaN(op) || op < price)) { setMsg('Original price must be equal to or higher than the price'); return; }
     const prod = {
-      name: f.name.trim(), category: f.cat, unit: f.unit, price,
+      name: f.name.trim(), brand_name: f.brand.trim() || null, category: f.cat, unit: f.unit, price,
       original_price: op > 0 ? op : null,
       discount_percent: discount,
 offer_expires_at: discount > 0 ? offerUntil : null,
@@ -4289,10 +4291,11 @@ offer_expires_at: discount > 0 ? offerUntil : null,
       <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 460 }}>
         {!p && masterProduct && <View style={[s.card, { marginHorizontal: 0, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
           <Photo url={masterProduct.image_url} name={masterProduct.name} size={64} />
-          <View style={{ flex: 1 }}><Text style={s.h}>{masterProduct.name}</Text><Text style={s.sub}>{masterProduct.category}</Text><Text style={s.sub}>Add your shop's price and stock below.</Text></View>
+          <View style={{ flex: 1 }}><Text style={s.h}>{masterProduct.name}</Text><Text style={s.sub}>{masterProduct.category}</Text>{!!masterProduct.brand_name && <Text style={s.sub}>Brand: {masterProduct.brand_name}</Text>}<Text style={s.sub}>Add your shop's price and stock below.</Text></View>
         </View>}
         {(p || (masterProduct && masterProduct.manual) || (!masterProduct && !p)) && <>
           <Field label="Product name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
+          <Field label="Brand Name (optional)" value={f.brand} onChangeText={set('brand')} autoCapitalize="words" maxLength={120} placeholder="e.g. Amul, Tata, Parle" />
           <Text style={s.label}>Category</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => set('cat')(c)} />)}</View>
         </>}
@@ -4332,7 +4335,7 @@ function MasterProductPicker({ products, onClose, onSelect, onAddNew }) {
     let live = true;
     (async () => {
       try {
-        const data = await api('/rest/v1/master_products?select=id,name,category,image_url&order=name.asc');
+        const data = await api('/rest/v1/master_products?select=id,name,category,image_url,brand_name&order=name.asc');
         if (live) setRows(Array.isArray(data) ? data : []);
       } catch (e) { if (live) setError(errMsg(e)); }
       finally { if (live) setLoading(false); }
@@ -4360,7 +4363,7 @@ function MasterProductPicker({ products, onClose, onSelect, onAddNew }) {
         {available.map((item) => <TouchableOpacity key={item.id} onPress={() => onSelect(item)}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: LINE }}>
           <Photo url={item.image_url} name={item.name} size={48} />
-          <View style={{ flex: 1 }}><RNText style={{ color: INK, fontWeight: '700' }}>{item.name}</RNText><RNText style={s.sub}>{item.category}</RNText></View>
+          <View style={{ flex: 1 }}><RNText style={{ color: INK, fontWeight: '700' }}>{item.name}</RNText><RNText style={s.sub}>{item.category}{item.brand_name ? ' · Brand: ' + item.brand_name : ''}</RNText></View>
           <RNText style={{ color: GREEN, fontWeight: '800' }}>Select ›</RNText>
         </TouchableOpacity>)}
       </ScrollView>
