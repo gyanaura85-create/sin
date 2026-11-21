@@ -4204,6 +4204,35 @@ offerUntil: p && p.offer_expires_at ? String(p.offer_expires_at).slice(0, 10) : 
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [pbusy, setPbusy] = useState(false);
+  const [masterProducts, setMasterProducts] = useState([]);
+  const [masterCategory, setMasterCategory] = useState(p && p.category ? p.category : PROD_CATS[0]);
+  const [masterQuery, setMasterQuery] = useState('');
+  const [masterLoading, setMasterLoading] = useState(false);
+  const [masterError, setMasterError] = useState('');
+  useEffect(() => {
+    let live = true;
+    const loadMasterProducts = async () => {
+      setMasterLoading(true);
+      try {
+        const rows = await api('/rest/v1/master_products?select=id,name,category,image_url&order=name.asc');
+        if (live) setMasterProducts(Array.isArray(rows) ? rows : []);
+      } catch (e) {
+        if (live) setMasterError(errMsg(e));
+      } finally {
+        if (live) setMasterLoading(false);
+      }
+    };
+    loadMasterProducts();
+    return () => { live = false; };
+  }, []);
+  const masterVisible = masterProducts.filter((x) =>
+    x.category === masterCategory && (!masterQuery || matchText((x.name || '') + ' ' + (x.category || ''), masterQuery))
+  );
+  const chooseMasterProduct = (item) => {
+    setF((x) => ({ ...x, name: item.name || x.name, cat: item.category || x.cat, img: item.image_url || x.img }));
+    if (item.category) setMasterCategory(item.category);
+    setMasterQuery('');
+  };
   const set = (k) => (v) => setF({ ...f, [k]: v });
   const pickPhoto = async () => {
     setPbusy(true); setMsg('');
@@ -4286,13 +4315,36 @@ offer_expires_at: discount > 0 ? offerUntil : null,
         </TouchableOpacity>
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 460 }}>
+        <View style={[s.card, { marginHorizontal: 0, marginTop: 8 }]}>
+          <Text style={s.h}>Choose from Master Catalogue</Text>
+          <Text style={[s.sub, { marginBottom: 8 }]}>Select a common product to fill its name, category and photo. Price and stock will belong only to your shop.</Text>
+          <Field label="Search catalogue" value={masterQuery} onChangeText={setMasterQuery} placeholder="Search product name..." />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+            {PROD_CATS.map((c) => <Chip key={c} t={c} on={masterCategory === c} color={PURPLE} onPress={() => { setMasterCategory(c); set('cat')(c); }} />)}
+          </ScrollView>
+          {masterLoading && <Text style={s.sub}>Loading master products...</Text>}
+          {!!masterError && <Text style={{ color: RED, fontSize: 12 }}>{'Catalogue: ' + masterError}</Text>}
+          {!masterLoading && masterVisible.length === 0 && <Text style={s.sub}>No master products in this category. You can add your own product below.</Text>}
+          {masterVisible.slice(0, 30).map((item) => (
+            <TouchableOpacity key={item.id} onPress={() => chooseMasterProduct(item)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: LINE }}>
+              <Photo url={item.image_url} name={item.name} size={42} />
+              <View style={{ flex: 1 }}>
+                <RNText style={{ color: INK, fontWeight: '700' }}>{item.name}</RNText>
+                <RNText style={s.sub}>{item.category}</RNText>
+              </View>
+              <RNText style={{ color: GREEN, fontWeight: '800' }}>Select</RNText>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={[s.sub, { marginBottom: 8 }]}>Not listed? Enter your own product details below. It will be saved only in this shop.</Text>
         <Text style={s.label}>Product photo</Text>
         <PhotoPicker url={f.img} name={f.name || 'P'} size={90} onPick={pickPhoto} busy={pbusy}
           label="Upload product photo" onRemove={() => setF({ ...f, img: '' })} />
         <Field label="Name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
         <Text style={s.label}>Category</Text>
         <View
-          style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => set('cat')(c)} />)}</View>
+          style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => { set('cat')(c); setMasterCategory(c); }} />)}</View>
         <Text style={s.label}>Unit (how you sell it)</Text>
         <View
           style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{UNITS.map((u) => <Chip key={u} t={u} on={f.unit === u} onPress={() => set('unit')(u)} />)}</View>
@@ -4333,11 +4385,13 @@ offer_expires_at: discount > 0 ? offerUntil : null,
 function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen, perr, canManage, onRequireSubscription }) {
   const [q, setQ] = useState('');
   const [fl, setFl] = useState('all');
+  const [catFilter, setCatFilter] = useState('all');
   const [showF, setShowF] = useState(false);
   const [edit, setEdit] = useState(null);
   const [msg, setMsg] = useState('');
   const stat = (p) => { if (p.active === false) return 'inactive'; const n = Number(p.online_qty); return n <= 0 ? 'out' : n <= Number(p.low_alert || 5) ? 'low' : 'in'; };
-  const list = products.filter((p) => (!q || matchText((p.name || '') + ' ' + (p.category || ''), q)) && (fl === 'all' || stat(p) === fl));
+  const list = products.filter((p) => (!q || matchText((p.name || '') + ' ' + (p.category || ''), q)) &&
+    (catFilter === 'all' || (p.category || 'Other') === catFilter) && (fl === 'all' || stat(p) === fl));
   const setActive = async (p, on) => {
     try {
       await rpc('seller_set_product_active', { p_shop_id: shop.id, p_product_id: p.id, p_active: on });
@@ -4386,6 +4440,13 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
               ))}
             </View>
           )}
+          <Text style={[s.label, { marginTop: 12 }]}>Filter by category</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <Chip t="All categories" on={catFilter === 'all'} color={PURPLE} onPress={() => setCatFilter('all')} />
+            {[...new Set([...PROD_CATS, ...products.map((p) => p.category).filter(Boolean)])].map((c) => (
+              <Chip key={c} t={c} on={catFilter === c} color={PURPLE} onPress={() => setCatFilter(c)} />
+            ))}
+          </ScrollView>
         </View>
 
         <View style={s.card}>
