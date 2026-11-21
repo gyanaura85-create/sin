@@ -5283,7 +5283,7 @@ function SellerApp({ shop, setShop, lang, onLang, onLogout }) {
     !!shop.subscription_expires_at && new Date(shop.subscription_expires_at).getTime() > Date.now();
   const [subscriptionOpen, setSubscriptionOpen] = useState(!isSubActive);
   const { os, load, err: oerr, alertMsg, clearAlert, hasMore, loadMore } = useOrders(shop.id);
-  const reloadP = useCallback(async (force) => {
+  const reloadP = useCallback(async (force = true) => {
     const cacheKey = 'seller_products_' + shop.id;
     const now = Date.now();
     if (!productsCacheReady.current) {
