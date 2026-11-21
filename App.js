@@ -4190,50 +4190,21 @@ function SellerOrders({ os, load, selId, setSel, err0, hasMore, loadMore }) {
 // product photo is uploaded from the gallery (no photo link). Buyers see this photo.
 // When the seller picks a main category that the shop does not sell yet, it is added to the shop categories,
 // so the shop automatically shows up under that category for buyers.
-function ProductForm({ shop, setShop, product, onClose, onDone }) {
+function ProductForm({ shop, setShop, product, masterProduct, onClose, onDone }) {
   const p = product;
   const [f, setF] = useState({
-    name: p ? p.name : '', cat: p && p.category ? p.category : PROD_CATS[0], unit: p ? p.unit : 'kg',
+    name: p ? p.name : (masterProduct && masterProduct.name ? masterProduct.name : ''), cat: p && p.category ? p.category : (masterProduct && masterProduct.category ? masterProduct.category : PROD_CATS[0]), unit: p ? p.unit : 'kg',
     price: p ? num(Number(p.price)) : '', op: p && p.original_price ? num(Number(p.original_price)) : '',
     discount: p && p.discount_percent ? String(p.discount_percent) : '',
 offerUntil: p && p.offer_expires_at ? String(p.offer_expires_at).slice(0, 10) : '',
     oq: p ? num(Number(p.online_qty)) : '', sq: p ? num(Number(p.shop_qty || 0)) : '',
     low: p && p.low_alert ? num(Number(p.low_alert)) : '5',
     desc: p && p.description ? p.description : '',
-    img: p && p.image_url ? p.image_url : '',
+    img: p && p.image_url ? p.image_url : (masterProduct && masterProduct.image_url ? masterProduct.image_url : ''),
   });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [pbusy, setPbusy] = useState(false);
-  const [masterProducts, setMasterProducts] = useState([]);
-  const [masterCategory, setMasterCategory] = useState(p && p.category ? p.category : PROD_CATS[0]);
-  const [masterQuery, setMasterQuery] = useState('');
-  const [masterLoading, setMasterLoading] = useState(false);
-  const [masterError, setMasterError] = useState('');
-  useEffect(() => {
-    let live = true;
-    const loadMasterProducts = async () => {
-      setMasterLoading(true);
-      try {
-        const rows = await api('/rest/v1/master_products?select=id,name,category,image_url&order=name.asc');
-        if (live) setMasterProducts(Array.isArray(rows) ? rows : []);
-      } catch (e) {
-        if (live) setMasterError(errMsg(e));
-      } finally {
-        if (live) setMasterLoading(false);
-      }
-    };
-    loadMasterProducts();
-    return () => { live = false; };
-  }, []);
-  const masterVisible = masterProducts.filter((x) =>
-    x.category === masterCategory && (!masterQuery || matchText((x.name || '') + ' ' + (x.category || ''), masterQuery))
-  );
-  const chooseMasterProduct = (item) => {
-    setF((x) => ({ ...x, name: item.name || x.name, cat: item.category || x.cat, img: item.image_url || x.img }));
-    if (item.category) setMasterCategory(item.category);
-    setMasterQuery('');
-  };
   const set = (k) => (v) => setF({ ...f, [k]: v });
   const pickPhoto = async () => {
     setPbusy(true); setMsg('');
@@ -4316,59 +4287,29 @@ offer_expires_at: discount > 0 ? offerUntil : null,
         </TouchableOpacity>
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 460 }}>
-        <View style={[s.card, { marginHorizontal: 0, marginTop: 8 }]}>
-          <Text style={s.h}>Choose from Master Catalogue</Text>
-          <Text style={[s.sub, { marginBottom: 8 }]}>Select a common product to fill its name, category and photo. Price and stock will belong only to your shop.</Text>
-          <Field label="Search catalogue" value={masterQuery} onChangeText={setMasterQuery} placeholder="Search product name..." />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-            {PROD_CATS.map((c) => <Chip key={c} t={c} on={masterCategory === c} color={PURPLE} onPress={() => { setMasterCategory(c); set('cat')(c); }} />)}
-          </ScrollView>
-          {masterLoading && <Text style={s.sub}>Loading master products...</Text>}
-          {!!masterError && <Text style={{ color: RED, fontSize: 12 }}>{'Catalogue: ' + masterError}</Text>}
-          {!masterLoading && masterVisible.length === 0 && <Text style={s.sub}>No master products in this category. You can add your own product below.</Text>}
-          {masterVisible.slice(0, 30).map((item) => (
-            <TouchableOpacity key={item.id} onPress={() => chooseMasterProduct(item)}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: LINE }}>
-              <Photo url={item.image_url} name={item.name} size={42} />
-              <View style={{ flex: 1 }}>
-                <RNText style={{ color: INK, fontWeight: '700' }}>{item.name}</RNText>
-                <RNText style={s.sub}>{item.category}</RNText>
-              </View>
-              <RNText style={{ color: GREEN, fontWeight: '800' }}>Select</RNText>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={[s.sub, { marginBottom: 8 }]}>Not listed? Enter your own product details below. It will be saved only in this shop.</Text>
-        <Text style={s.label}>Product photo</Text>
-        <PhotoPicker url={f.img} name={f.name || 'P'} size={90} onPick={pickPhoto} busy={pbusy}
-          label="Upload product photo" onRemove={() => setF({ ...f, img: '' })} />
-        <Field label="Name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
-        <Text style={s.label}>Category</Text>
-        <View
-          style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => { set('cat')(c); setMasterCategory(c); }} />)}</View>
+        {!p && masterProduct && <View style={[s.card, { marginHorizontal: 0, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+          <Photo url={masterProduct.image_url} name={masterProduct.name} size={64} />
+          <View style={{ flex: 1 }}><Text style={s.h}>{masterProduct.name}</Text><Text style={s.sub}>{masterProduct.category}</Text><Text style={s.sub}>Add your shop's price and stock below.</Text></View>
+        </View>}
+        {p && <>
+          <Text style={s.label}>Product photo</Text>
+          <PhotoPicker url={f.img} name={f.name || 'P'} size={90} onPick={pickPhoto} busy={pbusy} label="Upload product photo" onRemove={() => setF({ ...f, img: '' })} />
+          <Field label="Name" value={f.name} onChangeText={set('name')} autoCapitalize="words" />
+          <Text style={s.label}>Category</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{PROD_CATS.map((c) => <Chip key={c} t={c} on={f.cat === c} color={PURPLE} onPress={() => set('cat')(c)} />)}</View>
+        </>}
+        <Text style={s.label}>Product photo (optional)</Text>
+        <PhotoPicker url={f.img} name={f.name || 'P'} size={90} onPick={pickPhoto} busy={pbusy} label={f.img ? "Change product photo" : "Upload product photo"} onRemove={() => setF({ ...f, img: '' })} />
         <Text style={s.label}>Unit (how you sell it)</Text>
-        <View
-          style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{UNITS.map((u) => <Chip key={u} t={u} on={f.unit === u} onPress={() => set('unit')(u)} />)}</View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>{UNITS.map((u) => <Chip key={u} t={u} on={f.unit === u} onPress={() => set('unit')(u)} />)}</View>
         <Field label={'Price (₹ per ' + unitLabel(f.unit) + ')'} value={f.price} onChangeText={set('price')} keyboardType="decimal-pad" />
         <Field label="Original price (₹, optional)" value={f.op} onChangeText={set('op')} keyboardType="decimal-pad" />
         {Number(f.op) > Number(f.price) && Number(f.price) > 0 && <View style={{ backgroundColor: '#123d50', borderColor: '#1b9c9b', borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 10 }}>
           <RNText style={{ color: '#8ff0d5', fontWeight: '900' }}>🔥 {Math.round((Number(f.op) - Number(f.price)) / Number(f.op) * 100)}% discount will be highlighted</RNText>
           <Text style={{ color: '#d0e6f2', fontSize: 12, marginTop: 3 }}>{money(Number(f.op))} → {money(Number(f.price))}</Text>
         </View>}
-        <Field
-  label="Offer Discount (%)"
-  value={f.discount}
-  onChangeText={set('discount')}
-  keyboardType="number-pad"
-  placeholder="Example: 20"
-/>
-
-<Field
-  label="Offer Last Date (YYYY-MM-DD)"
-  value={f.offerUntil}
-  onChangeText={set('offerUntil')}
-  placeholder="Example: 2026-12-31"
-/>
+        <Field label="Offer Discount (%)" value={f.discount} onChangeText={set('discount')} keyboardType="number-pad" placeholder="Example: 20" />
+        <Field label="Offer Last Date (YYYY-MM-DD)" value={f.offerUntil} onChangeText={set('offerUntil')} placeholder="Example: 2026-12-31" />
         <Field label={'Online stock (' + unitLabel(f.unit) + ')'} value={f.oq} onChangeText={set('oq')} keyboardType="decimal-pad" />
         <Field label={'Shop stock (' + unitLabel(f.unit) + ', counter only)'} value={f.sq} onChangeText={set('sq')} keyboardType="decimal-pad" />
         <Field label="Low stock alert at" value={f.low} onChangeText={set('low')} keyboardType="decimal-pad" />
@@ -4382,6 +4323,52 @@ offer_expires_at: discount > 0 ? offerUntil : null,
   );
 }
 
+// ---------- Seller: choose an Admin Master Product before adding to shop ----------
+function MasterProductPicker({ products, onClose, onSelect }) {
+  const [rows, setRows] = useState([]);
+  const [category, setCategory] = useState('all');
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const data = await api('/rest/v1/master_products?select=id,name,category,image_url&order=name.asc');
+        if (live) setRows(Array.isArray(data) ? data : []);
+      } catch (e) { if (live) setError(errMsg(e)); }
+      finally { if (live) setLoading(false); }
+    })();
+    return () => { live = false; };
+  }, []);
+  const existing = new Set((products || []).map((p) => String(p.name || '').trim().toLocaleLowerCase()));
+  const available = rows.filter((x) => !existing.has(String(x.name || '').trim().toLocaleLowerCase()) &&
+    (category === 'all' || x.category === category) && (!query || matchText((x.name || '') + ' ' + (x.category || ''), query)));
+  const categories = [...new Set(rows.map((x) => x.category).filter(Boolean))];
+  return (
+    <Sheet onClose={onClose}>
+      <View style={s.rowB}><Text style={s.h}>Choose a Product</Text><TouchableOpacity onPress={onClose}><Text style={{ color: MUTE }}>Close</Text></TouchableOpacity></View>
+      <Text style={[s.sub, { marginTop: 4, marginBottom: 10 }]}>Admin catalogue products. Products already added to your shop are hidden.</Text>
+      <Field label="Search products" value={query} onChangeText={setQuery} placeholder="Search product name..." />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+        <Chip t="All" on={category === 'all'} color={PURPLE} onPress={() => setCategory('all')} />
+        {categories.map((c) => <Chip key={c} t={c} on={category === c} color={PURPLE} onPress={() => setCategory(c)} />)}
+      </ScrollView>
+      {loading && <Text style={s.sub}>Loading products...</Text>}
+      {!!error && <Text style={{ color: RED, fontSize: 12 }}>{error}</Text>}
+      {!loading && !error && available.length === 0 && <Text style={s.empty}>No new products available in this category.</Text>}
+      <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 470 }}>
+        {available.map((item) => <TouchableOpacity key={item.id} onPress={() => onSelect(item)}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: LINE }}>
+          <Photo url={item.image_url} name={item.name} size={48} />
+          <View style={{ flex: 1 }}><RNText style={{ color: INK, fontWeight: '700' }}>{item.name}</RNText><RNText style={s.sub}>{item.category}</RNText></View>
+          <RNText style={{ color: GREEN, fontWeight: '800' }}>Select ›</RNText>
+        </TouchableOpacity>)}
+      </ScrollView>
+    </Sheet>
+  );
+}
+
 // ---------- Seller: products table ----------
 function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen, perr, canManage, onRequireSubscription }) {
   const [q, setQ] = useState('');
@@ -4389,6 +4376,7 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
   const [catFilter, setCatFilter] = useState('all');
   const [showF, setShowF] = useState(false);
   const [edit, setEdit] = useState(null);
+  const [selectedMaster, setSelectedMaster] = useState(null);
   const [msg, setMsg] = useState('');
   const stat = (p) => { if (p.active === false) return 'inactive'; const n = Number(p.online_qty); return n <= 0 ? 'out' : n <= Number(p.low_alert || 5) ? 'low' : 'in'; };
   const list = products.filter((p) => (!q || matchText((p.name || '') + ' ' + (p.category || ''), q)) &&
@@ -4410,7 +4398,7 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
       ]) },
     { text: trs('Close'), style: 'cancel' },
   ]);
-  const done = (m) => { setEdit(null); setAddOpen(false); setMsg(m); reloadP(); };
+  const done = (m) => { setEdit(null); setSelectedMaster(null); setAddOpen(false); setMsg(m); reloadP(); };
 
   return (
     <View style={{ flex: 1 }}>
@@ -4419,7 +4407,7 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
           title="All Products"
           color={PURPLE}
           sub={products.length + ' products in total'}
-          right={<Btn small kind="w" t="+ Add Product" onPress={() => { if (!canManage) { onRequireSubscription(); return; } setEdit(null); setAddOpen(true); }} />}
+          right={<Btn small kind="w" t="+ Add Product" onPress={() => { if (!canManage) { onRequireSubscription(); return; } setEdit(null); setSelectedMaster(null); setAddOpen(true); }} />}
         />
         <Msg t={msg} ok={msg.startsWith('✅')} />
         <Msg t={perr} />
@@ -4491,14 +4479,11 @@ function SellerProducts({ shop, setShop, products, reloadP, addOpen, setAddOpen,
         </View>
         <View style={{ height: 30 }} />
       </ScrollView>
-      {(addOpen || edit) && (
-        <ProductForm
-          shop={shop}
-          setShop={setShop}
-          product={edit}
-          onClose={() => { setEdit(null); setAddOpen(false); }}
-          onDone={done}
-        />
+      {addOpen && <MasterProductPicker products={products} onClose={() => setAddOpen(false)}
+        onSelect={(item) => { setSelectedMaster(item); setAddOpen(false); }} />}
+      {(selectedMaster || edit) && (
+        <ProductForm shop={shop} setShop={setShop} product={edit} masterProduct={selectedMaster}
+          onClose={() => { setEdit(null); setSelectedMaster(null); setAddOpen(false); }} onDone={done} />
       )}
     </View>
   );
